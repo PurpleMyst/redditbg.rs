@@ -1,4 +1,4 @@
-#![cfg_attr(all(debug_assertions, windows), windows_subsystem = "windows")]
+#![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
 use std::time::Duration;
 
