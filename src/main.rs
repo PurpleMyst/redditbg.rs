@@ -1,13 +1,16 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::{convert::Infallible, time::Duration};
 
 use anyhow::{Context, Result};
+use futures::prelude::*;
 use image::GenericImageView;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use noisy_float::prelude::*;
 use reqwest::Client;
+
+use futures::channel::mpsc::{unbounded, UnboundedReceiver};
+use tokio::time::delay_for;
 
 const SCREEN_ASPECT_RATIO: f64 = 1366. / 768.;
 
@@ -94,14 +97,40 @@ fn setup_client() -> Result<Client> {
         .context("Failed to create client")
 }
 
-fn setup_systray() -> Result<()> {
+enum Message {
+    ChangeNow,
+    Quit,
+}
+
+fn setup_systray() -> Result<UnboundedReceiver<Message>> {
     let mut app = systray::Application::new()?;
 
+    let (tx, rx) = unbounded();
+
     app.set_tooltip("Reddit Background Setter")?;
-    app.add_menu_item("Quit", |app| -> Result<(), std::convert::Infallible> {
+
+    {
+        let tx = tx.clone();
+        app.add_menu_item("Change now", move |_app| -> Result<(), Infallible> {
+            info!("Sending Change Now message");
+
+            if let Err(err) = tx.unbounded_send(Message::ChangeNow) {
+                warn!("Error while sending change now message: {:?}", err);
+            }
+
+            Ok(())
+        })?;
+    }
+
+    app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
         info!("Quit was clicked in System Tray");
-        RUNNING.store(false, Ordering::Release);
+
+        // XXX: for whatever erason i have to mouse over the icon to get it to disappear? weird
         app.quit();
+        if let Err(err) = tx.unbounded_send(Message::Quit) {
+            warn!("Error while sending quit message: {:?}", err);
+        }
+
         Ok(())
     })?;
 
@@ -123,22 +152,19 @@ fn setup_systray() -> Result<()> {
             }
         })?;
 
-    Ok(())
+    Ok(rx)
 }
-
-static RUNNING: AtomicBool = AtomicBool::new(true);
 
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_logging()?;
-    setup_systray()?;
-
+    let mut messages = setup_systray()?;
     let client = setup_client()?;
 
     // Alright, so, if we get RUNNING = false while we're in the delay _technically_ the process is still open...
     // but no I/O should happen because after the delay the while condition will be checked
     // TODO: Maybe we could fix this by using a channel instead of an atomic and support even a few other messages.. Like "change now"
-    while RUNNING.load(Ordering::Acquire) {
+    loop {
         info!("Fetching new posts...");
 
         match find_new_background(&client).await {
@@ -146,9 +172,24 @@ async fn main() -> Result<()> {
             Err(err) => error!("{:?}", err),
         }
 
-        tokio::time::delay_for(Duration::from_secs(60 * 60)).await;
-    }
+        futures::select! {
+            // If we get a message while waiting, let's act on it
+            msg = messages.next() => match msg {
+                Some(Message::Quit) => {
+                    info!("Got Quit message, see ya!");
+                    return Ok(());
+                },
 
-    info!("Quitting");
-    Ok(())
+                Some(Message::ChangeNow) => {}
+
+                None => {
+                    warn!("sys tray hung up! exiting");
+                    return Ok(());
+                },
+            },
+
+            // Otherwise, let's "sleep" and if we don't get woken up just go on as normal
+            _ = delay_for(Duration::from_secs(60 * 60)).fuse() => {},
+        }
+    }
 }
