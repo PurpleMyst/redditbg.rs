@@ -1,5 +1,6 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -80,11 +81,8 @@ fn setup_logging() -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    setup_logging()?;
-
-    let client = Client::builder()
+fn setup_client() -> Result<Client> {
+    Client::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),
             "/",
@@ -93,9 +91,54 @@ async fn main() -> Result<()> {
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(10))
         .build()
-        .context("Failed to create client")?;
+        .context("Failed to create client")
+}
 
-    loop {
+fn setup_systray() -> Result<()> {
+    let mut app = systray::Application::new()?;
+
+    app.set_tooltip("Reddit Background Setter")?;
+    app.add_menu_item("Quit", |app| -> Result<(), std::convert::Infallible> {
+        info!("Quit was clicked in System Tray");
+        RUNNING.store(false, Ordering::Release);
+        app.quit();
+        Ok(())
+    })?;
+
+    let mut icon_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    icon_path.push("src");
+    icon_path.push("icon.ico");
+    // This should really support Path.. grumble grumble..
+    app.set_icon_from_file(
+        icon_path
+            .to_str()
+            .context("Icon path was not valid UTF-8")?,
+    )?;
+
+    std::thread::Builder::new()
+        .name("systray".to_owned())
+        .spawn(move || -> Result<()> {
+            loop {
+                app.wait_for_message()?;
+            }
+        })?;
+
+    Ok(())
+}
+
+static RUNNING: AtomicBool = AtomicBool::new(true);
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    setup_logging()?;
+    setup_systray()?;
+
+    let client = setup_client()?;
+
+    // Alright, so, if we get RUNNING = false while we're in the delay _technically_ the process is still open...
+    // but no I/O should happen because after the delay the while condition will be checked
+    // TODO: Maybe we could fix this by using a channel instead of an atomic and support even a few other messages.. Like "change now"
+    while RUNNING.load(Ordering::Acquire) {
         info!("Fetching new posts...");
 
         match find_new_background(&client).await {
@@ -105,4 +148,7 @@ async fn main() -> Result<()> {
 
         tokio::time::delay_for(Duration::from_secs(60 * 60)).await;
     }
+
+    info!("Quitting");
+    Ok(())
 }
