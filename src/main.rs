@@ -59,7 +59,7 @@ async fn find_new_background(client: &Client) -> Result<()> {
 fn setup_logging() -> Result<()> {
     use simplelog::*;
 
-    let mut path = dirs::data_local_dir().unwrap();
+    let mut path = dirs::data_local_dir()?;
     path.push("redditbg.log");
 
     let file = std::fs::OpenOptions::new()
@@ -144,6 +144,8 @@ fn setup_systray() -> Result<UnboundedReceiver<Message>> {
             .context("Icon path was not valid UTF-8")?,
     )?;
 
+    // XXX: this thread remains alive even after we quit the app, probably leading to the ghost icon problem. 
+    //      what can we do to fix it?
     std::thread::Builder::new()
         .name("systray".to_owned())
         .spawn(move || -> Result<()> {
@@ -161,9 +163,6 @@ async fn main() -> Result<()> {
     let mut messages = setup_systray()?;
     let client = setup_client()?;
 
-    // Alright, so, if we get RUNNING = false while we're in the delay _technically_ the process is still open...
-    // but no I/O should happen because after the delay the while condition will be checked
-    // TODO: Maybe we could fix this by using a channel instead of an atomic and support even a few other messages.. Like "change now"
     loop {
         info!("Fetching new posts...");
 
