@@ -1,6 +1,8 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::{convert::Infallible, time::Duration};
+use std::collections::HashSet;
+use std::convert::Infallible;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::prelude::*;
@@ -22,7 +24,7 @@ use reddit::*;
 
 mod background;
 
-async fn find_new_background(client: &Client) -> Result<()> {
+async fn find_new_background(client: &Client, already_set: &mut HashSet<String>) -> Result<()> {
     // Calculate url based on given subreddits
     // I think we could cache this but I'm not sure it matters
     let subreddits = include_str!("subreddits.txt")
@@ -33,16 +35,17 @@ async fn find_new_background(client: &Client) -> Result<()> {
     let url = format!("https://reddit.com/r/{}/new.json", subreddits);
 
     // Get the images and find which one fits best on our screen
-    let images = get_images(client, &url).await?;
-    let image = images
+    let images = get_images(client, &url, &already_set).await?;
+    let (url, image) = images
         .into_iter()
-        .min_by_key(|image| {
+        .min_by_key(|(_, image)| {
             (
                 (aspect_ratio(image) - SCREEN_ASPECT_RATIO).abs(),
                 std::cmp::Reverse(image.dimensions()),
             )
         })
         .context("Failed to find any images")?;
+    already_set.insert(url);
 
     // Save it to a path so that we can set it.
     // It's important to not put it in the home directory because people who do that are evil
@@ -163,10 +166,12 @@ async fn main() -> Result<()> {
     let mut messages = setup_systray()?;
     let client = setup_client()?;
 
+    let mut already_set = HashSet::new();
+
     loop {
         info!("Fetching new posts...");
 
-        match find_new_background(&client).await {
+        match find_new_background(&client, &mut already_set).await {
             Ok(()) => info!("Set background successfully"),
             Err(err) => error!("{:?}", err),
         }
@@ -187,8 +192,13 @@ async fn main() -> Result<()> {
                 },
             },
 
-            // Otherwise, let's "sleep" and if we don't get woken up just go on as normal
-            _ = delay_for(Duration::from_secs(60 * 60)).fuse() => {},
+            _ = delay_for(Duration::from_secs(60 * 60)).fuse() => {
+                // If we get here, we didn't get woken up by a message, so it's assumed roundabout one hour passed
+                // So let's reset the "already set" cache to avoid what is practically a memory leak
+                already_set.clear();
+
+                // Then let's just fall into the next iteration of the loop
+            },
         }
     }
 }

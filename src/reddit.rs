@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -42,7 +43,7 @@ async fn get_posts(client: &Client, url: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-async fn get_post_image(client: &Client, url: String) -> Result<DynamicImage> {
+async fn get_post_image(client: &Client, url: String) -> Result<(String, DynamicImage)> {
     async fn doit(client: &Client, url: &str) -> Result<Bytes> {
         Ok(client.get(url).send().await?.bytes().await?)
     }
@@ -62,18 +63,31 @@ async fn get_post_image(client: &Client, url: String) -> Result<DynamicImage> {
     let image = image::load_from_memory(&bytes)
         .with_context(|| format!("Failed to parse image {:?}", url))?;
 
-    Ok(image)
+    Ok((url, image))
 }
 
-pub async fn get_images(client: &Client, url: &str) -> Result<Vec<DynamicImage>> {
+pub async fn get_images(
+    client: &Client,
+    url: &str,
+    already_set: &HashSet<String>,
+) -> Result<Vec<(String, DynamicImage)>> {
     Ok(get_posts(client, url)
         .await?
         .into_iter()
+        .filter(|url| {
+            if already_set.contains(url) {
+                debug!("Skipping {:?} because we've already set it", url);
+                false
+            } else {
+                true
+            }
+        })
         .map(|url| get_post_image(client, url))
         .collect::<stream::FuturesUnordered<_>>()
-        .filter_map(|image| {
-            future::ready(match image {
-                Ok(image) => Some(image),
+        .filter_map(|post| {
+            future::ready(match post {
+                Ok(post) => Some(post),
+
                 Err(err) => {
                     warn!("{:?}", err);
                     None
