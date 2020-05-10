@@ -59,7 +59,7 @@ async fn find_new_background(client: &Client) -> Result<()> {
 fn setup_logging() -> Result<()> {
     use simplelog::*;
 
-    let mut path = dirs::data_local_dir()?;
+    let mut path = dirs::data_local_dir().context("Could not get local data directory")?;
     path.push("redditbg.log");
 
     let file = std::fs::OpenOptions::new()
@@ -144,7 +144,7 @@ fn setup_systray() -> Result<UnboundedReceiver<Message>> {
             .context("Icon path was not valid UTF-8")?,
     )?;
 
-    // XXX: this thread remains alive even after we quit the app, probably leading to the ghost icon problem. 
+    // XXX: this thread remains alive even after we quit the app, probably leading to the ghost icon problem.
     //      what can we do to fix it?
     std::thread::Builder::new()
         .name("systray".to_owned())
