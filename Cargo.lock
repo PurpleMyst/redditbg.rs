@@ -1474,7 +1474,7 @@ dependencies = [
  "simplelog",
  "systray",
  "tokio",
- "user32-sys",
+ "winapi 0.3.8",
 ]
 
 [[package]]
@@ -1900,16 +1900,6 @@ dependencies = [
  "idna",
  "matches",
  "percent-encoding",
-]
-
-[[package]]
-name = "user32-sys"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ef4711d107b21b410a3a974b1204d9accc8b10dad75d8324b5d755de1617d47"
-dependencies = [
- "winapi 0.2.8",
- "winapi-build",
 ]
 
 [[package]]
