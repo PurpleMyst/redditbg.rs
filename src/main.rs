@@ -105,6 +105,7 @@ enum Message {
     Quit,
 }
 
+// TODO: fork systray so we can make it actually work with async
 fn setup_systray() -> Result<UnboundedReceiver<Message>> {
     let mut app = systray::Application::new()?;
 
