@@ -3,6 +3,23 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+pub fn screen_aspect_ratio() -> Result<f64> {
+    use winapi::um::winuser::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN};
+
+    let (width, height) = unsafe {
+        (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+
+    // try_winapi! is useless here as GetSystemMetrics does not use GetLastError
+    anyhow::ensure!(width != 0, "GetSystemMetrics's returned width was zero");
+    anyhow::ensure!(height != 0, "GetSystemMetrics's returned height was zero");
+
+    Ok(f64::from(width) / f64::from(height))
+}
+
 #[cfg(windows)]
 pub fn set(path: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;

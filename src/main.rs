@@ -14,8 +14,6 @@ use reqwest::Client;
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use tokio::time::delay_for;
 
-const SCREEN_ASPECT_RATIO: f64 = 1366. / 768.;
-
 mod utils;
 use utils::*;
 
@@ -34,13 +32,15 @@ async fn find_new_background(client: &Client, already_set: &mut HashSet<String>)
         .join("+");
     let url = format!("https://reddit.com/r/{}/new.json", subreddits);
 
+    let screen_aspect_ratio = background::screen_aspect_ratio()?;
+
     // Get the images and find which one fits best on our screen
     let images = get_images(client, &url, &already_set).await?;
     let (url, image) = images
         .into_iter()
         .min_by_key(|(_, image)| {
             (
-                (aspect_ratio(image) - SCREEN_ASPECT_RATIO).abs(),
+                (aspect_ratio(image) - screen_aspect_ratio).abs(),
                 std::cmp::Reverse(image.dimensions()),
             )
         })
