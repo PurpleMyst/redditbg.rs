@@ -6,7 +6,12 @@ use anyhow::{Context, Result};
 #[cfg(windows)]
 pub fn set(path: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    use  winapi::um::winuser::SystemParametersInfoW;
+    use winapi::um::winuser::SystemParametersInfoW;
+
+    anyhow::ensure!(
+        path.is_absolute(),
+        "SystemParametersInfoW requires an absolute path"
+    );
 
     let path_utf16 = path
         .as_os_str()
