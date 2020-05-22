@@ -28,7 +28,7 @@ async fn get_posts(client: &Client, url: &str) -> Result<Vec<String>> {
     let mut listing =
         match FutureRetry::new(|| doit(client, url), BackoffPolicy(backoff.iter())).await {
             Ok((listing, _)) => listing,
-            Err((err, _)) => Err(err)?,
+            Err((err, _)) => return Err(err),
         };
 
     Ok(listing
@@ -38,7 +38,7 @@ async fn get_posts(client: &Client, url: &str) -> Result<Vec<String>> {
         .context("Toplevel data did not contain children")?
         .as_array()
         .context("Toplevel children were not an array")?
-        .into_iter()
+        .iter()
         .filter_map(|child| Some(child.get("data")?.get("url")?.as_str()?.to_owned()))
         .collect())
 }
