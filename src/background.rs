@@ -24,7 +24,7 @@ pub fn screen_aspect_ratio() -> Result<f64> {
 #[cfg(windows)]
 pub fn set(path: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    use winapi::um::winuser::SystemParametersInfoW;
+    use winapi::um::winuser::{SystemParametersInfoW, SPI_SETDESKWALLPAPER};
 
     anyhow::ensure!(
         path.is_absolute(),
@@ -37,7 +37,7 @@ pub fn set(path: &Path) -> Result<()> {
         .chain(Some(0))
         .collect::<Vec<u16>>();
 
-    let rv = unsafe { SystemParametersInfoW(20, 0, path_utf16.as_ptr() as *mut _, 0) };
+    let rv = unsafe { SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, path_utf16.as_ptr() as *mut _, 0) };
 
     if rv != 0 {
         Ok(())
