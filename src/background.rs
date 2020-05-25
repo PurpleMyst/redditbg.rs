@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+#[cfg(windows)]
 pub fn screen_aspect_ratio() -> Result<f64> {
     use winapi::um::winuser::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN};
 
