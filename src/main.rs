@@ -48,9 +48,11 @@ async fn find_new_background(client: &Client, already_set: &mut HashSet<String>)
 
     // Get the images and find which one fits best on our screen
     let images = get_images(client, &URL, &already_set).await?;
-    let (url, image) = images
+    let Background { url, image } = images
+        .collect::<Vec<_>>()
+        .await
         .into_iter()
-        .min_by_key(|(_, image)| {
+        .min_by_key(|Background { image, .. }| {
             (
                 (aspect_ratio(image) - screen_aspect_ratio).abs(),
                 std::cmp::Reverse(image.dimensions()),
@@ -73,6 +75,7 @@ fn setup_dirs() -> Result<()> {
     let mk = |name| std::fs::DirBuilder::new().recursive(true).create(name);
     mk(DIRS.cache_dir())?;
     mk(DIRS.data_local_dir())?;
+    mk(DIRS.data_dir())?;
     Ok(())
 }
 

@@ -12,8 +12,6 @@ use serde_json::Value;
 
 use super::utils::BackoffPolicy;
 
-const MAX_IMAGES: usize = 10;
-
 async fn get_posts(client: &Client, url: &str) -> Result<Vec<String>> {
     async fn doit(client: &Client, url: &str) -> Result<Value> {
         Ok(client.get(url).send().await?.json().await?)
@@ -43,7 +41,7 @@ async fn get_posts(client: &Client, url: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-async fn get_post_image(client: &Client, url: String) -> Result<(String, DynamicImage)> {
+async fn get_post_image(client: &Client, url: String) -> Result<Background> {
     async fn doit(client: &Client, url: &str) -> Result<Bytes> {
         Ok(client.get(url).send().await?.bytes().await?)
     }
@@ -63,14 +61,19 @@ async fn get_post_image(client: &Client, url: String) -> Result<(String, Dynamic
     let image = image::load_from_memory(&bytes)
         .with_context(|| format!("Failed to parse image {:?}", url))?;
 
-    Ok((url, image))
+    Ok(Background { url, image })
 }
 
-pub async fn get_images(
-    client: &Client,
-    url: &str,
-    already_set: &HashSet<String>,
-) -> Result<Vec<(String, DynamicImage)>> {
+pub struct Background {
+    pub url: String,
+    pub image: DynamicImage,
+}
+
+pub async fn get_images<'a>(
+    client: &'a Client,
+    url: &'a str,
+    already_set: &'a HashSet<String>,
+) -> Result<impl Stream<Item = Background> + 'a> {
     Ok(get_posts(client, url)
         .await?
         .into_iter()
@@ -93,8 +96,5 @@ pub async fn get_images(
                     None
                 }
             })
-        })
-        .take(MAX_IMAGES) // only count successful images towards the limit
-        .collect()
-        .await)
+        }))
 }
