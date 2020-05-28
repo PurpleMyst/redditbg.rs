@@ -5,6 +5,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use directories::ProjectDirs;
 use futures::prelude::*;
 use image::GenericImageView;
 use log::{debug, error, info, warn};
@@ -22,20 +23,31 @@ use reddit::*;
 
 mod background;
 
+lazy_static::lazy_static! {
+    static ref DIRS: ProjectDirs = ProjectDirs::from(
+        "it",
+        "PurpleMyst",
+        env!("CARGO_PKG_NAME")
+    ).expect("could not get project dirs");
+
+    static ref URL: String = {
+        let subreddits = include_str!("subreddits.txt")
+            .trim()
+            .lines()
+            .collect::<Vec<&str>>()
+            .join("+");
+        format!("https://reddit.com/r/{}/new.json", subreddits)
+    };
+}
+
 async fn find_new_background(client: &Client, already_set: &mut HashSet<String>) -> Result<()> {
     // Calculate url based on given subreddits
     // I think we could cache this but I'm not sure it matters
-    let subreddits = include_str!("subreddits.txt")
-        .trim()
-        .lines()
-        .collect::<Vec<&str>>()
-        .join("+");
-    let url = format!("https://reddit.com/r/{}/new.json", subreddits);
 
     let screen_aspect_ratio = background::screen_aspect_ratio()?;
 
     // Get the images and find which one fits best on our screen
-    let images = get_images(client, &url, &already_set).await?;
+    let images = get_images(client, &URL, &already_set).await?;
     let (url, image) = images
         .into_iter()
         .min_by_key(|(_, image)| {
@@ -48,9 +60,7 @@ async fn find_new_background(client: &Client, already_set: &mut HashSet<String>)
     already_set.insert(url);
 
     // Save it to a path so that we can set it.
-    // It's important to not put it in the home directory because people who do that are evil
-    let mut path = dirs::cache_dir().context("could not get cache dir")?;
-    path.push("redditbg_image.png");
+    let path = DIRS.cache_dir().join("background.png");
     debug!("Saving image to {:?}", path);
     image.save(&path)?;
 
@@ -59,11 +69,17 @@ async fn find_new_background(client: &Client, already_set: &mut HashSet<String>)
     background::set(&path)
 }
 
+fn setup_dirs() -> Result<()> {
+    let mk = |name| std::fs::DirBuilder::new().recursive(true).create(name);
+    mk(DIRS.cache_dir())?;
+    mk(DIRS.data_local_dir())?;
+    Ok(())
+}
+
 fn setup_logging() -> Result<()> {
     use simplelog::*;
 
-    let mut path = dirs::data_local_dir().context("Could not get local data directory")?;
-    path.push("redditbg.log");
+    let path = DIRS.data_local_dir().join("redditbg.log");
 
     let file = std::fs::OpenOptions::new()
         .append(true)
@@ -163,6 +179,7 @@ fn setup_systray() -> Result<UnboundedReceiver<Message>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    setup_dirs()?;
     setup_logging()?;
     let mut messages = setup_systray()?;
     let client = setup_client()?;
