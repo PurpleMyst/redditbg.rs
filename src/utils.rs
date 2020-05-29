@@ -46,6 +46,10 @@ impl AlreadySet {
             if read == 0 {
                 break;
             }
+            if line.ends_with('\n') {
+                // Remove the final newline if it is present
+                line.pop();
+            }
             result.insert(line);
         }
         Ok(Self(result))
