@@ -1,27 +1,23 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::collections::HashSet;
+// XXX:
+// Most of the here is marked as `async`.. it's really not.
+// Things like `background::set` are definitely not async, so..
+// maybe we could only asynchronously when fetching the images?
+
+// FIXME: only download images which are "close enough" to our aspect ratio
+
 use std::convert::Infallible;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use futures::prelude::*;
-use image::GenericImageView;
 use log::{debug, error, info, warn};
-use noisy_float::prelude::*;
 use reqwest::Client;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use tokio::time::delay_for;
-
-mod utils;
-use utils::*;
-
-mod reddit;
-use reddit::*;
-
-mod background;
 
 lazy_static::lazy_static! {
     static ref DIRS: ProjectDirs = ProjectDirs::from(
@@ -30,6 +26,7 @@ lazy_static::lazy_static! {
         env!("CARGO_PKG_NAME")
     ).expect("could not get project dirs");
 
+    // TODO: calculate this on the fly so that we can change subreddits.txt
     static ref URL: String = {
         let subreddits = include_str!("subreddits.txt")
             .trim()
@@ -40,42 +37,47 @@ lazy_static::lazy_static! {
     };
 }
 
-async fn find_new_background(client: &Client, already_set: &mut HashSet<String>) -> Result<()> {
-    // Calculate url based on given subreddits
-    // I think we could cache this but I'm not sure it matters
+#[macro_use]
+mod utils;
 
-    let screen_aspect_ratio = background::screen_aspect_ratio()?;
+mod reddit;
 
-    // Get the images and find which one fits best on our screen
-    let images = get_images(client, &URL, &already_set).await?;
-    let Background { url, image } = images
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .min_by_key(|Background { image, .. }| {
-            (
-                (aspect_ratio(image) - screen_aspect_ratio).abs(),
-                std::cmp::Reverse(image.dimensions()),
-            )
-        })
-        .context("Failed to find any images")?;
-    already_set.insert(url);
+mod fetcher;
 
-    // Save it to a path so that we can set it.
+mod picker;
+
+mod background;
+
+async fn find_new_background(client: &Client) -> Result<()> {
+    // Get the list of images from reddit
+    let urls = reddit::get_posts(client, &URL).await?;
+    info!("Got {:?} urls", urls.len());
+
+    // Fetch them and save them to the filesystem
+    debug!("Starting to fetch images ...");
+    let fetched = fetcher::fetch(client, urls).await?;
+    info!("Fetched {} new images", fetched);
+
+    // Choose one
+    debug!("Picking one...");
+    let picked = picker::pick().await?;
+
+    // Save it to the filesystem so that we can set it
     let path = DIRS.cache_dir().join("background.png");
-    debug!("Saving image to {:?}", path);
-    image.save(&path)?;
+    debug!("Saving {:?} ...", path);
+    picked.save(&path)?;
 
-    // And then we'll delegate the actual image-setting to the background module
-    info!("Setting background");
-    background::set(&path)
+    // Set it as a background
+    debug!("Setting background ...");
+    background::set(&path)?;
+
+    Ok(())
 }
 
 fn setup_dirs() -> Result<()> {
-    let mk = |name| std::fs::DirBuilder::new().recursive(true).create(name);
-    mk(DIRS.cache_dir())?;
-    mk(DIRS.data_local_dir())?;
-    mk(DIRS.data_dir())?;
+    use std::fs::create_dir_all;
+    create_dir_all(DIRS.cache_dir())?;
+    create_dir_all(DIRS.data_local_dir().join("images"))?;
     Ok(())
 }
 
@@ -148,7 +150,7 @@ fn setup_systray() -> Result<UnboundedReceiver<Message>> {
     app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
         info!("Quit was clicked in System Tray");
 
-        // XXX: for whatever erason i have to mouse over the icon to get it to disappear? weird
+        // XXX: for whatever reason i have to mouse over the icon to get it to disappear? weird
         app.quit();
         if let Err(err) = tx.unbounded_send(Message::Quit) {
             warn!("Error while sending quit message: {:?}", err);
@@ -187,12 +189,10 @@ async fn main() -> Result<()> {
     let mut messages = setup_systray()?;
     let client = setup_client()?;
 
-    let mut already_set = HashSet::new();
-
     loop {
         info!("Fetching new posts...");
 
-        match find_new_background(&client, &mut already_set).await {
+        match find_new_background(&client).await {
             Ok(()) => info!("Set background successfully"),
             Err(err) => error!("{:?}", err),
         }
@@ -213,13 +213,7 @@ async fn main() -> Result<()> {
                 },
             },
 
-            _ = delay_for(Duration::from_secs(60 * 60)).fuse() => {
-                // If we get here, we didn't get woken up by a message, so it's assumed roundabout one hour passed
-                // So let's reset the "already set" cache to avoid what is practically a memory leak
-                already_set.clear();
-
-                // Then let's just fall into the next iteration of the loop
-            },
+            _ = delay_for(Duration::from_secs(60 * 60)).fuse() => { /* next iter! */ },
         }
     }
 }
