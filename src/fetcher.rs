@@ -118,7 +118,7 @@ where
             future::ready(Ok(()))
         })
         .await?;
-    downloaded.store("downloaded").await?;
+    downloaded.store().await?;
 
     Ok(fetched)
 }
