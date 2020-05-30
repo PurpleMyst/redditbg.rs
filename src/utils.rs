@@ -22,23 +22,28 @@ impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
     }
 }
 
-/// Calculate the aspect ratio of a given image
-pub struct PersistentSet(HashSet<String>);
+pub struct PersistentSet {
+    name: &'static str,
+    contents: HashSet<String>,
+}
 
 impl PersistentSet {
-    pub async fn load(name: &str) -> Result<Self> {
+    pub async fn load(name: &'static str) -> Result<Self> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", name));
 
         let file = match fs::OpenOptions::new().read(true).open(path).await {
             Ok(file) => file,
             Err(err) => {
                 warn!("Could not open {}.txt: {:?}", name, err);
-                return Ok(Self(HashSet::new()));
+                return Ok(Self {
+                    name,
+                    contents: HashSet::new(),
+                });
             }
         };
 
         let mut reader = io::BufReader::new(file);
-        let mut result = HashSet::new();
+        let mut contents = HashSet::new();
 
         loop {
             let mut line = String::new();
@@ -50,14 +55,14 @@ impl PersistentSet {
                 // Remove the final newline if it is present
                 line.pop();
             }
-            result.insert(line);
+            contents.insert(line);
         }
-        Ok(Self(result))
+        Ok(Self { name, contents })
     }
 
-    pub async fn store(self, name: &str) -> Result<()> {
-        let path = DIRS.data_local_dir().join(format!("{}.txt", name));
-        let contents = self.0.into_iter().collect::<Vec<_>>().join("\n");
+    pub async fn store(self) -> Result<()> {
+        let path = DIRS.data_local_dir().join(format!("{}.txt", self.name));
+        let contents = self.contents.into_iter().collect::<Vec<_>>().join("\n");
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -77,11 +82,11 @@ impl PersistentSet {
     }
 
     pub fn insert_hash(&mut self, hash: String) -> bool {
-        self.0.insert(hash)
+        self.contents.insert(hash)
     }
 
     pub fn contains(&self, url: &str) -> bool {
-        self.0.contains(&Self::hash(url))
+        self.contents.contains(&Self::hash(url))
     }
 }
 
