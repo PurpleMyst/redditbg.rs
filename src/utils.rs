@@ -76,10 +76,6 @@ impl PersistentSet {
         format!("{:x}", hash)
     }
 
-    pub fn insert_url(&mut self, url: &str) -> bool {
-        self.insert_hash(Self::hash(url))
-    }
-
     pub fn insert_hash(&mut self, hash: String) -> bool {
         self.0.insert(hash)
     }
