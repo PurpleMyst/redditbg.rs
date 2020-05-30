@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "redditbg"
-version = "2.0.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1553,6 +1553,7 @@ dependencies = [
  "sha2",
  "simplelog",
  "systray",
+ "tempfile",
  "tokio",
  "winapi 0.3.8",
 ]

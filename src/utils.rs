@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::convert::TryFrom;
 
 use anyhow::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
@@ -22,17 +23,16 @@ impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
 }
 
 /// Calculate the aspect ratio of a given image
-pub struct AlreadySet(HashSet<String>);
+pub struct PersistentSet(HashSet<String>);
 
-// XXX: would this be better as an "already downloaded" instead of "already set"?
-impl AlreadySet {
-    pub async fn load() -> Result<Self> {
-        let path = DIRS.data_local_dir().join("already_set.txt");
+impl PersistentSet {
+    pub async fn load(name: &str) -> Result<Self> {
+        let path = DIRS.data_local_dir().join(format!("{}.txt", name));
 
         let file = match fs::OpenOptions::new().read(true).open(path).await {
             Ok(file) => file,
             Err(err) => {
-                warn!("Could not open already_set.txt: {:?}", err);
+                warn!("Could not open {}.txt: {:?}", name, err);
                 return Ok(Self(HashSet::new()));
             }
         };
@@ -55,8 +55,8 @@ impl AlreadySet {
         Ok(Self(result))
     }
 
-    pub async fn store(self) -> Result<()> {
-        let path = DIRS.data_local_dir().join("already_set.txt");
+    pub async fn store(self, name: &str) -> Result<()> {
+        let path = DIRS.data_local_dir().join(format!("{}.txt", name));
         let contents = self.0.into_iter().collect::<Vec<_>>().join("\n");
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -69,18 +69,27 @@ impl AlreadySet {
         Ok(())
     }
 
+    fn hash(url: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.input(url);
+        let hash = hasher.result();
+        format!("{:x}", hash)
+    }
+
+    pub fn insert_url(&mut self, url: &str) -> bool {
+        self.insert_hash(Self::hash(url))
+    }
+
     pub fn insert_hash(&mut self, hash: String) -> bool {
         self.0.insert(hash)
     }
 
     pub fn contains(&self, url: &str) -> bool {
-        let mut hasher = Sha256::new();
-        hasher.input(url);
-        let hash = hasher.result();
-        self.0.contains(&format!("{:x}", hash))
+        self.0.contains(&Self::hash(url))
     }
 }
 
+// XXX: this shouldn't be a macro
 #[macro_export]
 macro_rules! with_backoff {
     ($expr:expr) => {{
@@ -92,13 +101,29 @@ macro_rules! with_backoff {
             .jitter(0.3)
             .factor(2);
 
-        let retry_future = ::futures_retry::FutureRetry::new(
-            || $expr,
-            $crate::utils::BackoffPolicy(backoff.iter()),
-        );
+        let retry_future =
+            ::futures_retry::FutureRetry::new($expr, $crate::utils::BackoffPolicy(backoff.iter()));
         match retry_future.await {
             Ok((value, _)) => Ok(value),
             Err((err, _)) => Err(err),
         }
     }};
+}
+
+#[cfg(windows)]
+pub fn screen_size() -> Result<(u32, u32)> {
+    use winapi::um::winuser::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN};
+
+    let (width, height) = unsafe {
+        (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+
+    // try_winapi! is useless here as GetSystemMetrics does not use GetLastError
+    anyhow::ensure!(width != 0, "GetSystemMetrics's returned width was zero");
+    anyhow::ensure!(height != 0, "GetSystemMetrics's returned height was zero");
+
+    Ok((u32::try_from(width)?, u32::try_from(height)?))
 }
