@@ -1,7 +1,6 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
 use std::convert::Infallible;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -34,13 +33,9 @@ mod picker;
 mod background;
 
 async fn find_new_background(client: &Client) -> Result<()> {
-    // TODO: let's store this in the config dir so that we can distribute the binary
-    let subreddits_txt = fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("subreddits.txt"),
-    )
-    .await?;
+    let subreddits_txt = fs::read_to_string(DIRS.config_dir().join("subreddits.txt"))
+        .await
+        .context("Could not read subreddits.txt")?;
 
     let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
 
@@ -77,6 +72,7 @@ fn setup_dirs() -> Result<()> {
     use std::fs::create_dir_all;
     create_dir_all(DIRS.cache_dir())?;
     create_dir_all(DIRS.data_local_dir().join("images"))?;
+    create_dir_all(DIRS.config_dir())?;
     Ok(())
 }
 
