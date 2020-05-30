@@ -3,12 +3,13 @@ use futures::prelude::*;
 use log::{debug, info, warn};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tokio::{fs, prelude::*};
+use tokio::fs;
 
-use crate::utils::AlreadySet;
+use crate::utils::PersistentSet;
 use crate::DIRS;
 
-const MAX_DOWNLOADED: usize = 25;
+// This value is kinda arbitrary but there are 25 potential images in one reddit page
+const MAX_CACHED: usize = 25;
 
 /// Append a generated filename for an url to the given path buffer
 fn make_filename(path: &mut std::path::PathBuf, url: &str) {
@@ -29,18 +30,8 @@ async fn download_count() -> Result<usize> {
 
 /// Download one image into its place
 async fn fetch_one(client: &Client, url: String) -> Result<()> {
-    // Create the file for the image with a generated filename
-    let mut path = DIRS.data_local_dir().join("images");
-    make_filename(&mut path, &url);
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&path)
-        .await
-        .with_context(|| format!("Failed to open file {:?} for {:?}", path, url))?;
-
     // Fetch the image's body
-    let body: bytes::Bytes = with_backoff!(client
+    let body: bytes::Bytes = with_backoff!(|| client
         .get(&url)
         .send()
         .and_then(|response| response.bytes()))
@@ -50,39 +41,59 @@ async fn fetch_one(client: &Client, url: String) -> Result<()> {
     // Verify that it looks like an image
     match ::image::guess_format(&body) {
         Ok(fmt) => info!("{:?} is an image of format {:?}", url, fmt),
-        Err(..) => debug!("{:?} was not an image", url),
+        Err(err) => {
+            debug!("{:?} was not an image", url);
+            return Err(err.into());
+        }
     }
 
-    // Write it to the filesystem
-    info!("Saving {:?} to {:?}", url, path);
-    file.write_all(&body).await?;
-    file.sync_all().await?;
+    // Let's calculate the path we want
+    let mut path = DIRS.data_local_dir().join("images");
+    make_filename(&mut path, &url);
+
+    // Now we'll write it to a temporary file that will then be *atomically* persisted once it's all written
+    // The use of `spawn_blocking` means that once we start writing an image we *will* write an image
+    // As per the tokio docs:
+    // "Closures spawned using spawn_blocking cannot be cancelled.
+    //  When you shut down the executor, it will wait indefinitely for all blocking operations to finish."
+    // XXX: ^ We may be able to fix this if we use spawn_blocking just to
+    //      return a `(File, Path)` back to async-land
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        use std::io::prelude::*;
+        let mut file = tempfile::NamedTempFile::new()?;
+        info!("Writing {:?} to temporary file @ {:?}...", url, file.path());
+        file.write_all(&body).context("writing body")?;
+        info!("Flushing {:?}", url);
+        file.flush().context("flushing")?;
+        info!("Persisting {:?} to {:?} ...", url, path);
+        file.persist(path).context("persisting")?;
+        Ok(())
+    })
+    .await??;
 
     Ok(())
 }
 
-/// Fetch the images in the given urls
-///
-/// This skips over images which have been already set as a background and it also
-/// tries to only download `MAX_DOWNLOADED` images.
 pub async fn fetch<Urls>(client: &Client, urls: Urls) -> Result<usize>
 where
-    Urls: IntoIterator<Item = String>,
+    Urls: Stream<Item = String>,
 {
-    let already_set = AlreadySet::load().await?;
-    let downloaded_count = download_count().await?;
+    let mut downloaded = PersistentSet::load("downloaded").await?;
+    let cached_count = download_count().await?;
 
-    Ok(urls
-        .into_iter()
+    // Fetch the needed images
+    let fetched = urls
         // Skip over images we've already set
-        .filter(|url| !already_set.contains(url))
+        .filter(|url| future::ready(!downloaded.contains(url)))
         // Start downloading them, not necessarily in order
         .map(|url| fetch_one(client, url))
-        .collect::<stream::FuturesOrdered<_>>()
+        // Instead of polling in order, take a block of 25 and poll them all at once
+        .buffer_unordered(25)
         // As they come in, filter out the ones that failed
         .filter_map(|result| {
             future::ready(match result {
                 Ok(()) => Some(()),
+
                 Err(err) => {
                     warn!("{:?}", err);
                     None
@@ -90,8 +101,24 @@ where
             })
         })
         // Consider only the ones that succeeded for the max download calculation
-        .take(MAX_DOWNLOADED.saturating_sub(downloaded_count))
+        .take(MAX_CACHED.saturating_sub(cached_count))
         // Count them out and return it
         .fold(0, |acc, ()| future::ready(acc + 1))
-        .await)
+        .await;
+
+    // Now let's update `downloaded` with what we've got in `images/`
+    let dir = DIRS.data_local_dir().join("images");
+    tokio::fs::read_dir(dir)
+        .await?
+        .try_for_each(|entry| {
+            if let Some(stem) = entry.path().file_stem().and_then(std::ffi::OsStr::to_str) {
+                downloaded.insert_hash(stem.to_owned());
+            }
+
+            future::ready(Ok(()))
+        })
+        .await?;
+    downloaded.store("downloaded").await?;
+
+    Ok(fetched)
 }

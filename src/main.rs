@@ -1,13 +1,7 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-// XXX:
-// Most of the here is marked as `async`.. it's really not.
-// Things like `background::set` are definitely not async, so..
-// maybe we could only asynchronously when fetching the images?
-
-// FIXME: only download images which are "close enough" to our aspect ratio
-
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -17,6 +11,7 @@ use log::{debug, error, info, warn};
 use reqwest::Client;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
+use tokio::fs;
 use tokio::time::delay_for;
 
 lazy_static::lazy_static! {
@@ -25,16 +20,6 @@ lazy_static::lazy_static! {
         "PurpleMyst",
         env!("CARGO_PKG_NAME")
     ).expect("could not get project dirs");
-
-    // TODO: calculate this on the fly so that we can change subreddits.txt
-    static ref URL: String = {
-        let subreddits = include_str!("subreddits.txt")
-            .trim()
-            .lines()
-            .collect::<Vec<&str>>()
-            .join("+");
-        format!("https://reddit.com/r/{}/new.json", subreddits)
-    };
 }
 
 #[macro_use]
@@ -49,18 +34,32 @@ mod picker;
 mod background;
 
 async fn find_new_background(client: &Client) -> Result<()> {
+    // TODO: let's store this in the config dir so that we can distribute the binary
+    let subreddits_txt = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("subreddits.txt"),
+    )
+    .await?;
+
+    let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
+
     // Get the list of images from reddit
-    let urls = reddit::get_posts(client, &URL).await?;
-    info!("Got {:?} urls", urls.len());
+    let posts = reddit::Posts::new(client, &subreddits);
+    info!("Got posts");
 
     // Fetch them and save them to the filesystem
     debug!("Starting to fetch images ...");
-    let fetched = fetcher::fetch(client, urls).await?;
+    let fetched = fetcher::fetch(client, posts).await?;
     info!("Fetched {} new images", fetched);
 
     // Choose one
-    debug!("Picking one...");
+    debug!("Picking one ...");
     let picked = picker::pick().await?;
+
+    debug!("Resizing background (the sampling algorithm is slow) ...");
+    let (w, h) = utils::screen_size()?;
+    let picked = picked.resize(w, h, image::imageops::FilterType::Lanczos3);
 
     // Save it to the filesystem so that we can set it
     let path = DIRS.cache_dir().join("background.png");

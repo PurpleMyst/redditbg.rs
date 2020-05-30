@@ -2,9 +2,8 @@ use std::fs;
 
 use anyhow::{Context, Result};
 use image::DynamicImage;
-use log::{info, warn};
+use log::{debug, info, warn};
 
-use crate::utils::AlreadySet;
 use crate::DIRS;
 
 // FIXME: use tokio::fs
@@ -23,27 +22,17 @@ pub async fn pick() -> Result<DynamicImage> {
             match maybe_image {
                 Ok(image) => Some((path, image)),
 
-                // FIXME: remove erroneous images
                 Err(err) => {
-                    warn!("Failed to open {:?}: {}", path, err);
+                    warn!("Error while parsing as an image {:?}: {:?}", path, err);
+                    debug!("Removing {:?}", path);
+                    if let Err(err) = std::fs::remove_file(&path) {
+                        warn!("Error while removing {:?}: {:?}", path, err);
+                    }
                     None
                 }
             }
         })
         .context("Could not find a valid image")?;
-
-    // Put it in the "already set" pile
-    info!("Adding {:?} to the already set file", path);
-    let mut already_set = AlreadySet::load().await?;
-    already_set.insert_hash(
-        path.file_stem()
-            .context("Could not get path file stem")?
-            .to_str()
-            .context("Path was not valid UTF-8")?
-            .to_string(),
-    );
-    already_set.store().await?;
-
     // Remove the original file
     info!("Removing {:?}", path);
     fs::remove_file(path)?;
