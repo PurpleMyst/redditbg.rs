@@ -124,7 +124,7 @@ enum Message {
 }
 
 // TODO: fork systray so we can make it actually work with async
-fn setup_systray(logger: Logger) -> Result<UnboundedReceiver<Message>> {
+fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver<Message>)> {
     let mut app = systray::Application::new()?;
 
     let (tx, rx) = unbounded();
@@ -145,21 +145,24 @@ fn setup_systray(logger: Logger) -> Result<UnboundedReceiver<Message>> {
         })?;
     }
 
-    app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
-        info!(logger, "sending message"; "message" => "quit");
+    {
+        let logger = logger.clone();
+        app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
+            info!(logger, "sending message"; "message" => "quit");
 
-        // So I've kinda read through the source code of `systray` and
-        // it seems to me that this is enough to get it to exit out of `wait_for_message`,
-        // causing the thread calling that to exit and app to get dropped and therefore
-        // `shutdown` is called. Hope that works.
-        app.quit();
+            // So I've kinda read through the source code of `systray` and
+            // it seems to me that this is enough to get it to exit out of `wait_for_message`,
+            // causing the thread calling that to exit and app to get dropped and therefore
+            // `shutdown` is called. Hope that works.
+            app.quit();
 
-        if let Err(err) = tx.unbounded_send(Message::Quit) {
-            error!(logger, "could not send message"; "error" => ?err);
-        }
+            if let Err(err) = tx.unbounded_send(Message::Quit) {
+                error!(logger, "could not send message"; "error" => ?err);
+            }
 
-        Ok(())
-    })?;
+            Ok(())
+        })?;
+    }
 
     let mut icon_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     icon_path.push("src");
@@ -171,18 +174,18 @@ fn setup_systray(logger: Logger) -> Result<UnboundedReceiver<Message>> {
             .context("Icon path was not valid UTF-8")?,
     )?;
 
-    std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .name("systray".to_owned())
         .spawn(move || app.wait_for_message().map_err(anyhow::Error::from))?;
 
-    Ok(rx)
+    Ok((utils::JoinOnDrop::new(logger.clone(), handle), rx))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_dirs()?;
     let logger = setup_logging()?;
-    let mut messages = setup_systray(logger.new(o!("state" => "systray")))?;
+    let (_guard, mut messages) = setup_systray(logger.new(o!("state" => "systray")))?;
     let client = setup_client()?;
 
     loop {

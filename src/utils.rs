@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 use anyhow::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
 use sha2::{Digest, Sha256};
-use slog::{info, warn, Logger};
+use slog::{debug, error, info, warn, Logger};
 use tokio::{fs, io, prelude::*};
 
 use crate::DIRS;
@@ -135,4 +135,40 @@ pub fn screen_size() -> Result<(u32, u32)> {
     anyhow::ensure!(height != 0, "GetSystemMetrics's returned height was zero");
 
     Ok((u32::try_from(width)?, u32::try_from(height)?))
+}
+
+pub struct JoinOnDrop {
+    logger: Logger,
+    handle: Option<std::thread::JoinHandle<Result<()>>>,
+}
+
+impl JoinOnDrop {
+    pub fn new(logger: Logger, handle: std::thread::JoinHandle<Result<()>>) -> Self {
+        Self {
+            logger,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for JoinOnDrop {
+    fn drop(&mut self) {
+        match self.handle.take().unwrap().join() {
+            Ok(Ok(())) => debug!(self.logger, "child thread joined"),
+
+            Ok(Err(err)) => error!(self.logger, "child thread returned error"; "error" => ?err),
+
+            Err(err) => {
+                let err: &dyn std::fmt::Display = if let Some(err) = err.downcast_ref::<String>() {
+                    err
+                } else if let Some(err) = err.downcast_ref::<&'static str>() {
+                    err
+                } else {
+                    &"not of known type"
+                };
+
+                error!(self.logger, "child thread panic"; "error" => %err)
+            }
+        }
+    }
 }
