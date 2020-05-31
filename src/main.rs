@@ -89,10 +89,18 @@ fn setup_logging() -> Result<slog::Logger> {
         .open(path)
         .context("Could not open log file")?;
 
-    let drain = slog_bunyan::with_name(env!("CARGO_PKG_NAME"), file)
+    let drain1 = slog_bunyan::with_name(env!("CARGO_PKG_NAME"), file)
         .build()
         .fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
+
+    let drain2 = {
+        let decorator = slog_term::TermDecorator::new().build();
+        slog_term::CompactFormat::new(decorator).build().fuse()
+    };
+
+    let drain = slog_async::Async::new(slog::Duplicate::new(drain1, drain2).fuse())
+        .build()
+        .fuse();
 
     Ok(slog::Logger::root(drain, slog::o!()))
 }
