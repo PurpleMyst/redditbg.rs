@@ -30,6 +30,7 @@ async fn download_count() -> Result<usize> {
 }
 
 /// Download one image into its place
+// TODO: we can probably extract more images
 async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     // Fetch the image's body
     let body: bytes::Bytes = with_backoff!(|| client
@@ -88,7 +89,11 @@ where
         // Skip over images we've already set
         .filter(|url| future::ready(!downloaded.contains(url)))
         // Start downloading them, not necessarily in order
-        .map(|url| fetch_one(logger.new(o!("url" => url.clone())), client, url))
+        .map(|url| {
+            let logger = logger.new(o!("url" => url.clone()));
+            fetch_one(logger.clone(), client, url)
+                .map_err(move |err| warn!(logger, "failed fetching"; "error" => ?err))
+        })
         // Instead of polling in order, take a block of 25 and poll them all at once
         .buffer_unordered(25)
         // As they come in, filter out the ones that failed
