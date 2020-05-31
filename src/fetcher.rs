@@ -97,16 +97,7 @@ where
         // Instead of polling in order, take a block of 25 and poll them all at once
         .buffer_unordered(25)
         // As they come in, filter out the ones that failed
-        .filter_map(|result| {
-            future::ready(match result {
-                Ok(()) => Some(()),
-
-                Err(err) => {
-                    warn!(logger, "failed fetching image"; "error" => ?err);
-                    None
-                }
-            })
-        })
+        .filter_map(|result| future::ready(result.ok()))
         // Consider only the ones that succeeded for the max download calculation
         .take(MAX_CACHED.saturating_sub(cached_count))
         // Count them out and return it
