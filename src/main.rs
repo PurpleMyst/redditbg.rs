@@ -140,8 +140,12 @@ fn setup_systray(logger: Logger) -> Result<UnboundedReceiver<Message>> {
     app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
         info!(logger, "sending message"; "message" => "quit");
 
-        // XXX: for whatever reason i have to mouse over the icon to get it to disappear? weird
+        // So I've kinda read through the source code of `systray` and
+        // it seems to me that this is enough to get it to exit out of `wait_for_message`,
+        // causing the thread calling that to exit and app to get dropped and therefore
+        // `shutdown` is called. Hope that works.
         app.quit();
+
         if let Err(err) = tx.unbounded_send(Message::Quit) {
             error!(logger, "could not send message"; "error" => ?err);
         }
@@ -159,15 +163,9 @@ fn setup_systray(logger: Logger) -> Result<UnboundedReceiver<Message>> {
             .context("Icon path was not valid UTF-8")?,
     )?;
 
-    // XXX: this thread remains alive even after we quit the app, probably leading to the ghost icon problem.
-    //      what can we do to fix it?
     std::thread::Builder::new()
         .name("systray".to_owned())
-        .spawn(move || -> Result<()> {
-            loop {
-                app.wait_for_message()?;
-            }
-        })?;
+        .spawn(move || app.wait_for_message().map_err(anyhow::Error::from))?;
 
     Ok(rx)
 }
@@ -192,18 +190,20 @@ async fn main() -> Result<()> {
             msg = messages.next() => match msg {
                 Some(Message::Quit) => {
                     info!(logger, "got quit message");
-                    return Ok(());
+                    break;
                 },
 
                 Some(Message::ChangeNow) => info!(logger, "got change now message"),
 
                 None => {
                     error!(logger, "sys tray hung up");
-                    return Ok(());
+                    break;
                 },
             },
 
             _ = delay_for(Duration::from_secs(60 * 60)).fuse() => { /* next iter! */ },
         }
     }
+
+    Ok(())
 }
