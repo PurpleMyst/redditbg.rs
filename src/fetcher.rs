@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use futures::prelude::*;
-use log::{debug, info, warn};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use slog::{debug, info, o, warn, Logger};
 use tokio::fs;
 
 use crate::utils::PersistentSet;
@@ -17,6 +17,7 @@ fn make_filename(path: &mut std::path::PathBuf, url: &str) {
     hasher.input(url);
     let hash = hasher.result();
     // As far as I can tell the image crate has no way to get the extension for a given format
+    // TODO: ^ that's a lie thanks to my github issue
     path.push(format!("{:x}.dat", hash));
 }
 
@@ -29,20 +30,21 @@ async fn download_count() -> Result<usize> {
 }
 
 /// Download one image into its place
-async fn fetch_one(client: &Client, url: String) -> Result<()> {
+// TODO: use the `Accept` header
+async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     // Fetch the image's body
     let body: bytes::Bytes = with_backoff!(|| client
         .get(&url)
         .send()
         .and_then(|response| response.bytes()))
     .with_context(|| format!("Failed to fetch {:?}", url))?;
-    info!("Fetched the body of {:?}", url);
+    info!(logger, "got body"; "size" => body.len());
 
     // Verify that it looks like an image
     match ::image::guess_format(&body) {
-        Ok(fmt) => info!("{:?} is an image of format {:?}", url, fmt),
+        Ok(fmt) => info!(logger, "got image"; "format" => ?fmt),
         Err(err) => {
-            debug!("{:?} was not an image", url);
+            info!(logger, "not image");
             return Err(err.into());
         }
     }
@@ -61,11 +63,11 @@ async fn fetch_one(client: &Client, url: String) -> Result<()> {
     tokio::task::spawn_blocking(move || -> Result<()> {
         use std::io::prelude::*;
         let mut file = tempfile::NamedTempFile::new()?;
-        info!("Writing {:?} to temporary file @ {:?}...", url, file.path());
+        debug!(logger, "created temporary file"; "path" => ?file.path());
         file.write_all(&body).context("writing body")?;
-        info!("Flushing {:?}", url);
+        debug!(logger, "flushing temporary file");
         file.flush().context("flushing")?;
-        info!("Persisting {:?} to {:?} ...", url, path);
+        debug!(logger, "persisting temporary file"; "path" => ?path);
         file.persist(path).context("persisting")?;
         Ok(())
     })
@@ -74,11 +76,11 @@ async fn fetch_one(client: &Client, url: String) -> Result<()> {
     Ok(())
 }
 
-pub async fn fetch<Urls>(client: &Client, urls: Urls) -> Result<usize>
+pub async fn fetch<Urls>(logger: Logger, client: &Client, urls: Urls) -> Result<usize>
 where
     Urls: Stream<Item = String>,
 {
-    let mut downloaded = PersistentSet::load("downloaded").await?;
+    let mut downloaded = PersistentSet::load(logger.clone(), "downloaded").await?;
     let cached_count = download_count().await?;
 
     // Fetch the needed images
@@ -86,7 +88,7 @@ where
         // Skip over images we've already set
         .filter(|url| future::ready(!downloaded.contains(url)))
         // Start downloading them, not necessarily in order
-        .map(|url| fetch_one(client, url))
+        .map(|url| fetch_one(logger.new(o!("url" => url.clone())), client, url))
         // Instead of polling in order, take a block of 25 and poll them all at once
         .buffer_unordered(25)
         // As they come in, filter out the ones that failed
@@ -95,7 +97,7 @@ where
                 Ok(()) => Some(()),
 
                 Err(err) => {
-                    warn!("{:?}", err);
+                    warn!(logger, "failed fetching image"; "error" => ?err);
                     None
                 }
             })
