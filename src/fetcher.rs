@@ -30,11 +30,11 @@ async fn download_count() -> Result<usize> {
 }
 
 /// Download one image into its place
-// TODO: use the `Accept` header
 async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     // Fetch the image's body
     let body: bytes::Bytes = with_backoff!(|| client
         .get(&url)
+        .header("Accept", "image/*")
         .send()
         .and_then(|response| response.bytes()))
     .with_context(|| format!("Failed to fetch {:?}", url))?;
