@@ -6,8 +6,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use futures::prelude::*;
-use log::{debug, error, info, warn};
 use reqwest::Client;
+use slog::{debug, error, info, o, Logger};
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use tokio::fs;
@@ -32,7 +32,7 @@ mod picker;
 
 mod background;
 
-async fn find_new_background(client: &Client) -> Result<()> {
+async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
     let subreddits_txt = fs::read_to_string(DIRS.config_dir().join("subreddits.txt"))
         .await
         .context("Could not read subreddits.txt")?;
@@ -40,29 +40,31 @@ async fn find_new_background(client: &Client) -> Result<()> {
     let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
 
     // Get the list of images from reddit
-    let posts = reddit::Posts::new(client, &subreddits);
-    info!("Got posts");
+    let posts = reddit::Posts::new(
+        logger.new(o!("state" => "getting posts")),
+        client,
+        &subreddits,
+    );
+    info!(logger, "got posts");
 
     // Fetch them and save them to the filesystem
-    debug!("Starting to fetch images ...");
-    let fetched = fetcher::fetch(client, posts).await?;
-    info!("Fetched {} new images", fetched);
+    let fetched = fetcher::fetch(logger.new(o!("state" => "fetching")), client, posts).await?;
+    info!(logger, "fetched"; "count" => fetched);
 
     // Choose one
-    debug!("Picking one ...");
-    let picked = picker::pick().await?;
+    let picked = picker::pick(logger.new(o!("state" => "picking"))).await?;
 
-    debug!("Resizing background (the sampling algorithm is slow) ...");
+    debug!(logger, "resizing background");
     let (w, h) = utils::screen_size()?;
     let picked = picked.resize(w, h, image::imageops::FilterType::Lanczos3);
 
     // Save it to the filesystem so that we can set it
     let path = DIRS.cache_dir().join("background.png");
-    debug!("Saving {:?} ...", path);
+    debug!(logger, "saving background"; "path" => ?path);
     picked.save(&path)?;
 
     // Set it as a background
-    debug!("Setting background ...");
+    debug!(logger, "setting background");
     background::set(&path)?;
 
     Ok(())
@@ -76,10 +78,10 @@ fn setup_dirs() -> Result<()> {
     Ok(())
 }
 
-fn setup_logging() -> Result<()> {
-    use simplelog::*;
+fn setup_logging() -> Result<slog::Logger> {
+    use slog::Drain;
 
-    let path = DIRS.data_local_dir().join("redditbg.log");
+    let path = DIRS.data_local_dir().join("redditbg.log.jsonl");
 
     let file = std::fs::OpenOptions::new()
         .append(true)
@@ -87,20 +89,12 @@ fn setup_logging() -> Result<()> {
         .open(path)
         .context("Could not open log file")?;
 
-    let config = ConfigBuilder::new()
-        .add_filter_allow_str(module_path!())
-        .set_time_format_str("%F %T")
-        .set_thread_level(LevelFilter::Off)
-        .build();
+    let drain = slog_bunyan::with_name(env!("CARGO_PKG_NAME"), file)
+        .build()
+        .fuse();
+    let drain = slog_async::Async::new(drain).build().fuse();
 
-    let mut loggers: Vec<Box<dyn SharedLogger>> = Vec::with_capacity(2);
-    loggers.push(WriteLogger::new(LevelFilter::Debug, config.clone(), file));
-    if let Some(logger) = TermLogger::new(LevelFilter::Debug, config, TerminalMode::Mixed) {
-        loggers.push(logger);
-    }
-    CombinedLogger::init(loggers)?;
-
-    Ok(())
+    Ok(slog::Logger::root(drain, slog::o!()))
 }
 
 fn setup_client() -> Result<Client> {
@@ -122,7 +116,7 @@ enum Message {
 }
 
 // TODO: fork systray so we can make it actually work with async
-fn setup_systray() -> Result<UnboundedReceiver<Message>> {
+fn setup_systray(logger: Logger) -> Result<UnboundedReceiver<Message>> {
     let mut app = systray::Application::new()?;
 
     let (tx, rx) = unbounded();
@@ -131,11 +125,12 @@ fn setup_systray() -> Result<UnboundedReceiver<Message>> {
 
     {
         let tx = tx.clone();
+        let logger = logger.clone();
         app.add_menu_item("Change now", move |_app| -> Result<(), Infallible> {
-            info!("Sending Change Now message");
+            info!(logger, "sending message"; "message" => "change now");
 
             if let Err(err) = tx.unbounded_send(Message::ChangeNow) {
-                warn!("Error while sending change now message: {:?}", err);
+                error!(logger, "could not send message"; "error" => ?err);
             }
 
             Ok(())
@@ -143,12 +138,12 @@ fn setup_systray() -> Result<UnboundedReceiver<Message>> {
     }
 
     app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
-        info!("Quit was clicked in System Tray");
+        info!(logger, "sending message"; "message" => "quit");
 
         // XXX: for whatever reason i have to mouse over the icon to get it to disappear? weird
         app.quit();
         if let Err(err) = tx.unbounded_send(Message::Quit) {
-            warn!("Error while sending quit message: {:?}", err);
+            error!(logger, "could not send message"; "error" => ?err);
         }
 
         Ok(())
@@ -180,30 +175,30 @@ fn setup_systray() -> Result<UnboundedReceiver<Message>> {
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_dirs()?;
-    setup_logging()?;
-    let mut messages = setup_systray()?;
+    let logger = setup_logging()?;
+    let mut messages = setup_systray(logger.new(o!("state" => "systray")))?;
     let client = setup_client()?;
 
     loop {
-        info!("Fetching new posts...");
+        info!(logger, "finding new background");
 
-        match find_new_background(&client).await {
-            Ok(()) => info!("Set background successfully"),
-            Err(err) => error!("{:?}", err),
+        match find_new_background(&logger, &client).await {
+            Ok(()) => info!(logger, "set background successfully"),
+            Err(err) => error!(logger, "error while finding new background"; "error" => ?err),
         }
 
         futures::select! {
             // If we get a message while waiting, let's act on it
             msg = messages.next() => match msg {
                 Some(Message::Quit) => {
-                    info!("Got Quit message, see ya!");
+                    info!(logger, "got quit message");
                     return Ok(());
                 },
 
-                Some(Message::ChangeNow) => {}
+                Some(Message::ChangeNow) => info!(logger, "got change now message"),
 
                 None => {
-                    warn!("sys tray hung up! exiting");
+                    error!(logger, "sys tray hung up");
                     return Ok(());
                 },
             },

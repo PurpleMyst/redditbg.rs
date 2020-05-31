@@ -3,8 +3,8 @@ use std::convert::TryFrom;
 
 use anyhow::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
-use log::warn;
 use sha2::{Digest, Sha256};
+use slog::{info, warn, Logger};
 use tokio::{fs, io, prelude::*};
 
 use crate::DIRS;
@@ -23,19 +23,22 @@ impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
 }
 
 pub struct PersistentSet {
+    logger: Logger,
     name: &'static str,
     contents: HashSet<String>,
 }
 
 impl PersistentSet {
-    pub async fn load(name: &'static str) -> Result<Self> {
+    pub async fn load(logger: Logger, name: &'static str) -> Result<Self> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", name));
+        info!(logger, "loading persistent set"; "path" => ?path);
 
         let file = match fs::OpenOptions::new().read(true).open(path).await {
             Ok(file) => file,
             Err(err) => {
-                warn!("Could not open {}.txt: {:?}", name, err);
+                warn!(logger, "failed to open persistent set"; "name" => name, "error" => ?err);
                 return Ok(Self {
+                    logger,
                     name,
                     contents: HashSet::new(),
                 });
@@ -57,11 +60,16 @@ impl PersistentSet {
             }
             contents.insert(line);
         }
-        Ok(Self { name, contents })
+        Ok(Self {
+            logger,
+            name,
+            contents,
+        })
     }
 
     pub async fn store(self) -> Result<()> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", self.name));
+        info!(self.logger, "storing persistent set"; "path" => ?path);
         let contents = self.contents.into_iter().collect::<Vec<_>>().join("\n");
         let mut file = fs::OpenOptions::new()
             .write(true)

@@ -2,18 +2,20 @@ use std::fs;
 
 use anyhow::{Context, Result};
 use image::DynamicImage;
-use log::{debug, info, warn};
+use slog::{debug, info, o, warn, Logger};
 
 use crate::DIRS;
 
 // FIXME: use tokio::fs
-pub async fn pick() -> Result<DynamicImage> {
+pub async fn pick(logger: Logger) -> Result<DynamicImage> {
     // Get all downloaded images
     let (path, image) = fs::read_dir(DIRS.data_local_dir().join("images"))?
         .find_map(|entry| {
             // Validate if this entry is actually an image and if so return it and its loaded image
             let entry = entry.ok()?;
             let path = entry.path();
+
+            let logger = logger.new(o!("path" => path.to_string_lossy().into_owned()));
 
             let maybe_image = image::io::Reader::open(&path)
                 .map_err(anyhow::Error::from)
@@ -23,10 +25,10 @@ pub async fn pick() -> Result<DynamicImage> {
                 Ok(image) => Some((path, image)),
 
                 Err(err) => {
-                    warn!("Error while parsing as an image {:?}: {:?}", path, err);
-                    debug!("Removing {:?}", path);
+                    warn!(logger, "could not parse image"; "error" => ?err);
+                    debug!(logger, "removing image");
                     if let Err(err) = std::fs::remove_file(&path) {
-                        warn!("Error while removing {:?}: {:?}", path, err);
+                        warn!(logger, "error while removing"; "error" => ?err);
                     }
                     None
                 }
@@ -34,7 +36,7 @@ pub async fn pick() -> Result<DynamicImage> {
         })
         .context("Could not find a valid image")?;
     // Remove the original file
-    info!("Removing {:?}", path);
+    info!(logger, "removing original file"; "path" => ?path);
     fs::remove_file(path)?;
 
     Ok(image)

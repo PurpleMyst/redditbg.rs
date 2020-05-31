@@ -3,13 +3,14 @@ use std::task::Poll;
 
 use anyhow::{Context, Result};
 use futures::prelude::*;
-use log::warn;
 use reqwest::Client;
 use serde_json::Value;
+use slog::{warn, Logger};
 
 use crate::with_backoff;
 
 pub struct Posts<'a> {
+    logger: Logger,
     client: &'a Client,
     subreddits: &'a [&'a str],
     next_page_id: Option<String>,
@@ -24,8 +25,9 @@ enum PostsState {
 }
 
 impl<'a> Posts<'a> {
-    pub fn new(client: &'a Client, subreddits: &'a [&'a str]) -> Self {
+    pub fn new(logger: Logger, client: &'a Client, subreddits: &'a [&'a str]) -> Self {
         Self {
+            logger,
             client,
             subreddits,
             next_page_id: None,
@@ -113,7 +115,7 @@ impl<'a> Stream for Posts<'a> {
                         Err(err) => {
                             // We've already got backoff baked into `get_next_page`, we probably can't recover here
                             // It's best if we just stop giving out posts
-                            warn!("Error while fetching posts: {:?}", err);
+                            warn!(self.logger, "error while fetching posts"; "error" => ?err);
                             self.state = PostsState::Exhausted;
                         }
                     }
@@ -129,7 +131,7 @@ impl<'a> Stream for Posts<'a> {
                         } else {
                             // If the previous page had no "after", it's probably best to mark ourselves as exhausted
                             // So that we can avoid entering a sort of "cycle"
-                            warn!("No next_page_id");
+                            warn!(self.logger, "missing next_page_id");
                             self.state = PostsState::Exhausted;
                         }
                     }
