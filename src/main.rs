@@ -74,6 +74,7 @@ fn setup_dirs() -> Result<()> {
     use std::fs::create_dir_all;
     create_dir_all(DIRS.cache_dir())?;
     create_dir_all(DIRS.data_local_dir().join("images"))?;
+    create_dir_all(DIRS.data_local_dir().join("logs"))?;
     create_dir_all(DIRS.config_dir())?;
     Ok(())
 }
@@ -81,13 +82,12 @@ fn setup_dirs() -> Result<()> {
 fn setup_logging() -> Result<slog::Logger> {
     use slog::Drain;
 
-    let path = DIRS.data_local_dir().join("redditbg.log.jsonl");
-
-    let file = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .context("Could not open log file")?;
+    let file = file_rotator::RotatingFile::new(
+        env!("CARGO_PKG_NAME"),
+        DIRS.data_local_dir().join("logs"),
+        file_rotator::RotationPeriod::Interval(std::time::Duration::from_secs(60 * 60 * 24)),
+        7,
+    );
 
     let drain1 = slog_bunyan::with_name(env!("CARGO_PKG_NAME"), file)
         .build()
