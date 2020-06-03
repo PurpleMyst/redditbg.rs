@@ -150,10 +150,10 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
         app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
             info!(logger, "sending message"; "message" => "quit");
 
-            // So I've kinda read through the source code of `systray` and
-            // it seems to me that this is enough to get it to exit out of `wait_for_message`,
-            // causing the thread calling that to exit and app to get dropped and therefore
-            // `shutdown` is called. Hope that works.
+            // at this point i'm praying this works
+            if let Err(err) = app.shutdown() {
+                error!(logger, "shutdown failed"; "error" => ?err);
+            }
             app.quit();
 
             if let Err(err) = tx.unbounded_send(Message::Quit) {
