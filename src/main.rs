@@ -1,7 +1,7 @@
+#![recursion_limit = "512"]
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::convert::Infallible;
-use std::time::Duration;
+use std::{convert::Infallible, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
@@ -10,8 +10,7 @@ use reqwest::Client;
 use slog::{debug, error, info, o, Logger};
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-use tokio::fs;
-use tokio::time::delay_for;
+use tokio::{fs, time::delay_for};
 
 lazy_static::lazy_static! {
     static ref DIRS: ProjectDirs = ProjectDirs::from(
@@ -30,7 +29,7 @@ mod fetcher;
 
 mod picker;
 
-mod background;
+mod platform;
 
 async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
     let subreddits_txt = fs::read_to_string(DIRS.config_dir().join("subreddits.txt"))
@@ -65,7 +64,7 @@ async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
 
     // Set it as a background
     debug!(logger, "setting background");
-    background::set(&path)?;
+    platform::set_background(&path)?;
 
     Ok(())
 }
@@ -120,6 +119,7 @@ fn setup_client() -> Result<Client> {
 
 enum Message {
     ChangeNow,
+    CopyImage,
     Quit,
 }
 
@@ -146,6 +146,23 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
     }
 
     {
+        let tx = tx.clone();
+        let logger = logger.clone();
+        app.add_menu_item(
+            "Copy background to clipboard",
+            move |_app| -> Result<(), Infallible> {
+                info!(logger, "sending message"; "message" => "copy image");
+
+                if let Err(err) = tx.unbounded_send(Message::CopyImage) {
+                    error!(logger, "could not send message"; "error" => ?err);
+                }
+
+                Ok(())
+            },
+        )?;
+    }
+
+    {
         let logger = logger.clone();
         app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
             info!(logger, "sending message"; "message" => "quit");
@@ -164,7 +181,7 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
         })?;
     }
 
-    let mut icon_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut icon_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     icon_path.push("src");
     icon_path.push("icon.ico");
     // This should really support Path.. grumble grumble..
@@ -188,7 +205,7 @@ async fn main() -> Result<()> {
     let (_guard, mut messages) = setup_systray(logger.new(o!("state" => "systray")))?;
     let client = setup_client()?;
 
-    loop {
+    'mainloop: loop {
         info!(logger, "finding new background");
 
         match find_new_background(&logger, &client).await {
@@ -196,23 +213,40 @@ async fn main() -> Result<()> {
             Err(err) => error!(logger, "error while finding new background"; "error" => ?err),
         }
 
-        futures::select! {
-            // If we get a message while waiting, let's act on it
-            msg = messages.next() => match msg {
-                Some(Message::Quit) => {
-                    info!(logger, "got quit message");
-                    break;
+        loop {
+            futures::select! {
+                // If we get a message while waiting, let's act on it
+                msg = messages.next() => match msg {
+                    Some(Message::Quit) => {
+                        info!(logger, "got quit message");
+                        break 'mainloop;
+                    },
+
+                    Some(Message::ChangeNow) => {
+                        info!(logger, "got change now message"),
+                        continue 'mainloop;
+                    }
+
+                    Some(Message::CopyImage) => {
+                        match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
+                            .map_err(anyhow::Error::from)
+                            .and_then(|reader| Ok(reader.with_guessed_format()?.decode()?))
+                            .and_then(|img| platform::copy_image(img.into_rgba()))
+                        {
+                            Ok(()) => info!(logger, "copied image"),
+                            // TODO: Show tray notification
+                            Err(error) => error!(logger, "copy image error"; "error" => ?error),
+                        }
+                    }
+
+                    None => {
+                        error!(logger, "sys tray hung up");
+                        break 'mainloop;
+                    },
                 },
 
-                Some(Message::ChangeNow) => info!(logger, "got change now message"),
-
-                None => {
-                    error!(logger, "sys tray hung up");
-                    break;
-                },
-            },
-
-            _ = delay_for(Duration::from_secs(60 * 60)).fuse() => { /* next iter! */ },
+                _ = delay_for(Duration::from_secs(60 * 60)).fuse() => { continue 'mainloop; },
+            }
         }
     }
 
