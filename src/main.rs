@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
                     },
 
                     Some(Message::ChangeNow) => {
-                        info!(logger, "got change now message"),
+                        info!(logger, "got change now message");
                         continue 'mainloop;
                     }
 
