@@ -1,10 +1,10 @@
 #![recursion_limit = "512"]
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::{convert::Infallible, path::PathBuf, time::Duration};
+use std::{convert::Infallible, time::Duration};
 
 use directories::ProjectDirs;
-use eyre::{eyre, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use futures::prelude::*;
 use reqwest::Client;
 use slog::{debug, error, info, o, Logger};
@@ -97,9 +97,16 @@ fn setup_logging() -> Result<slog::Logger> {
         slog_term::CompactFormat::new(decorator).build().fuse()
     };
 
-    let drain = slog_async::Async::new(slog::Duplicate::new(drain1, drain2).fuse())
-        .build()
-        .fuse();
+    let drain3 = platform::NotifyOnError {
+        title: env!("CARGO_PKG_NAME").into(),
+        icon: ICON_PATH.into(),
+    }
+    .ignore_res();
+
+    let drain = slog::Duplicate::new(drain1, drain2).fuse();
+    let drain = slog::Duplicate::new(drain, drain3).fuse();
+
+    let drain = slog_async::Async::new(drain).build().fuse();
 
     Ok(slog::Logger::root(drain, slog::o!()))
 }
@@ -122,6 +129,8 @@ enum Message {
     CopyImage,
     Quit,
 }
+
+const ICON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/icon.ico");
 
 // TODO: fork systray so we can make it actually work with async
 fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver<Message>)> {
@@ -181,15 +190,8 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
         })?;
     }
 
-    let mut icon_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    icon_path.push("src");
-    icon_path.push("icon.ico");
     // This should really support Path.. grumble grumble..
-    app.set_icon_from_file(
-        icon_path
-            .to_str()
-            .ok_or_else(|| eyre!("Icon path was not valid UTF-8"))?,
-    )?;
+    app.set_icon_from_file(ICON_PATH)?;
 
     let handle = std::thread::Builder::new()
         .name("systray".to_owned())
@@ -234,8 +236,11 @@ async fn main() -> Result<()> {
                             .and_then(|img| platform::copy_image(img.into_rgba()))
                         {
                             Ok(()) => info!(logger, "copied image"),
+
                             // TODO: Show tray notification
-                            Err(error) => error!(logger, "copy image error"; "error" => ?error),
+                            Err(error) => {
+                                error!(logger, "copy image error"; "error" => ?error);
+                            }
                         }
                     }
 

@@ -1,6 +1,6 @@
-use std::{io, path::Path};
+use std::{io, path::Path, path::PathBuf};
 
-use eyre::{ensure, Result, WrapErr};
+use eyre::{ensure, eyre, Result, WrapErr};
 use image::RgbaImage;
 
 macro_rules! wintry {
@@ -68,4 +68,83 @@ pub fn copy_image(img: RgbaImage) -> Result<()> {
     // want to delete the bitmap object and close the clipboard even if any
     // preceding/succeeding operations fail
     set_result.and(delete_result).and(close_result)
+}
+
+pub struct NotifyOnError {
+    pub title: String,
+    pub icon: PathBuf,
+}
+
+struct FindKey {
+    key: &'static str,
+    value: Option<String>,
+}
+
+impl slog::Serializer for FindKey {
+    fn emit_arguments(&mut self, key: slog::Key, val: &std::fmt::Arguments) -> slog::Result {
+        if key == self.key {
+            self.value = Some(format!("{}", val));
+        }
+
+        Ok(())
+    }
+}
+
+impl FindKey {
+    fn find_key(key: &'static str, record: &slog::Record, kv: impl slog::KV) -> Option<String> {
+        let mut this = Self { key, value: None };
+        let _ = kv.serialize(record, &mut this);
+        this.value
+    }
+}
+
+impl slog::Drain for NotifyOnError {
+    type Ok = ();
+
+    type Err = eyre::Report;
+
+    #[cfg(windows)]
+    fn log(
+        &self,
+        record: &slog::Record,
+        values: &slog::OwnedKVList,
+    ) -> Result<Self::Ok, Self::Err> {
+        use winrt_notification::{Duration, IconCrop, Toast};
+
+        if !record.level().is_at_least(slog::Level::Error) {
+            return Ok(());
+        }
+
+        Toast::new(Toast::POWERSHELL_APP_ID)
+            .title(&self.title)
+            .text1(&format!(
+                "{}:{}:{}",
+                record.file(),
+                record.line(),
+                record.column()
+            ))
+            .text2(
+                &if let Some(error) = FindKey::find_key("error", record, values) {
+                    format!("{} ({})", record.msg(), error)
+                } else {
+                    format!("{}", record.msg())
+                },
+            )
+            .duration(Duration::Short)
+            .icon(
+                &self.icon,
+                IconCrop::Square,
+                self.icon
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or(""),
+            )
+            .show()
+            .map_err(|err| {
+                eyre!(
+                    "Failed to show notification (HRESULT {:?})",
+                    err.as_hresult()
+                )
+            })
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "redditbg"
-version = "3.1.0"
+version = "3.2.0"
 authors = ["PurpleMyst <PurpleMyst@users.noreply.github.com>"]
 edition = "2018"
 
@@ -29,3 +29,4 @@ eyre = "0.6.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3.8"
+winrt-notification = "0.2.2"
