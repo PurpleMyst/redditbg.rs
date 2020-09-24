@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::convert::TryFrom;
 
-use anyhow::Result;
+use eyre::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
 use sha2::{Digest, Sha256};
 use slog::{debug, error, info, warn, Logger};
@@ -131,8 +131,8 @@ pub fn screen_size() -> Result<(u32, u32)> {
     };
 
     // try_winapi! is useless here as GetSystemMetrics does not use GetLastError
-    anyhow::ensure!(width != 0, "GetSystemMetrics's returned width was zero");
-    anyhow::ensure!(height != 0, "GetSystemMetrics's returned height was zero");
+    eyre::ensure!(width != 0, "GetSystemMetrics's returned width was zero");
+    eyre::ensure!(height != 0, "GetSystemMetrics's returned height was zero");
 
     Ok((u32::try_from(width)?, u32::try_from(height)?))
 }

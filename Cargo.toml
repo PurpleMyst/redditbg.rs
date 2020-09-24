@@ -5,7 +5,6 @@ authors = ["PurpleMyst <PurpleMyst@users.noreply.github.com>"]
 edition = "2018"
 
 [dependencies]
-anyhow = "1.0.28"
 bytes = "0.5.4"
 directories = { version = "1.0.1", package = "directories-next" }
 exponential-backoff = "0.2.2"
@@ -26,6 +25,7 @@ tempfile = "3.1.0"
 tokio = { version = "0.2.20", features = ["macros", "time", "fs", "io-util", "blocking"] }
 slog-bunyan = "2.2.0"
 file-rotator = "0.2.1"
+eyre = "0.6.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3.8"

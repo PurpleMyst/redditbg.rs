@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use eyre::{Result, WrapErr};
 use futures::prelude::*;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
@@ -38,7 +38,7 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
         .header("Accept", "image/*")
         .send()
         .and_then(|response| response.bytes()))
-    .with_context(|| format!("Failed to fetch {:?}", url))?;
+    .wrap_err_with(|| format!("Failed to fetch {:?}", url))?;
     info!(logger, "got body"; "size" => body.len());
 
     // Verify that it looks like an image
@@ -65,11 +65,11 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
         use std::io::prelude::*;
         let mut file = tempfile::NamedTempFile::new()?;
         debug!(logger, "created temporary file"; "path" => ?file.path());
-        file.write_all(&body).context("writing body")?;
+        file.write_all(&body).wrap_err("writing body")?;
         debug!(logger, "flushing temporary file");
-        file.flush().context("flushing")?;
+        file.flush().wrap_err("flushing")?;
         debug!(logger, "persisting temporary file"; "path" => ?path);
-        file.persist(path).context("persisting")?;
+        file.persist(path).wrap_err("persisting")?;
         Ok(())
     })
     .await??;

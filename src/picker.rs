@@ -1,6 +1,6 @@
 use std::fs;
 
-use anyhow::{Context, Result};
+use eyre::{eyre, Result};
 use image::DynamicImage;
 use slog::{debug, info, o, warn, Logger};
 
@@ -18,7 +18,7 @@ pub async fn pick(logger: Logger) -> Result<DynamicImage> {
             let logger = logger.new(o!("path" => path.to_string_lossy().into_owned()));
 
             let maybe_image = image::io::Reader::open(&path)
-                .map_err(anyhow::Error::from)
+                .map_err(eyre::Error::from)
                 .and_then(|reader| Ok(reader.with_guessed_format()?.decode()?));
 
             match maybe_image {
@@ -34,7 +34,7 @@ pub async fn pick(logger: Logger) -> Result<DynamicImage> {
                 }
             }
         })
-        .context("Could not find a valid image")?;
+        .ok_or_else(|| eyre!("Could not find a valid image"))?;
     // Remove the original file
     info!(logger, "removing original file"; "path" => ?path);
     fs::remove_file(path)?;

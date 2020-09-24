@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::task::Poll;
 
-use anyhow::{Context, Result};
+use eyre::{eyre, Result};
 use futures::prelude::*;
 use reqwest::Client;
 use serde_json::Value;
@@ -58,12 +58,12 @@ impl<'a> Posts<'a> {
                     .unwrap()
                     .send()
                     .and_then(|resp| resp.json())
-                    .map_err(anyhow::Error::from)
+                    .map_err(eyre::Error::from)
             })?;
 
             let data = listing
                 .get_mut("data")
-                .context("Toplevel JSON did not have data")?;
+                .ok_or_else(|| eyre!("Toplevel JSON did not have data"))?;
 
             let next_page_id = data
                 .get("after")
@@ -74,9 +74,9 @@ impl<'a> Posts<'a> {
             Ok((
                 next_page_id,
                 data.get_mut("children")
-                    .context("Toplevel data did not contain children")?
+                    .ok_or_else(|| eyre!("Toplevel data did not contain children"))?
                     .as_array()
-                    .context("Toplevel children were not an array")?
+                    .ok_or_else(|| eyre!("Toplevel children were not an array"))?
                     .iter()
                     .filter_map(|child| Some(child.get("data")?.get("url")?.as_str()?.to_owned()))
                     .collect(),

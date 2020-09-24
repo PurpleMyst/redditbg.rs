@@ -3,8 +3,8 @@
 
 use std::{convert::Infallible, path::PathBuf, time::Duration};
 
-use anyhow::{Context, Result};
 use directories::ProjectDirs;
+use eyre::{eyre, Result, WrapErr};
 use futures::prelude::*;
 use reqwest::Client;
 use slog::{debug, error, info, o, Logger};
@@ -34,7 +34,7 @@ mod platform;
 async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
     let subreddits_txt = fs::read_to_string(DIRS.config_dir().join("subreddits.txt"))
         .await
-        .context("Could not read subreddits.txt")?;
+        .wrap_err("Could not read subreddits.txt")?;
 
     let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
 
@@ -114,7 +114,7 @@ fn setup_client() -> Result<Client> {
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(10))
         .build()
-        .context("Failed to create client")
+        .wrap_err("Failed to create client")
 }
 
 enum Message {
@@ -188,12 +188,12 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
     app.set_icon_from_file(
         icon_path
             .to_str()
-            .context("Icon path was not valid UTF-8")?,
+            .ok_or_else(|| eyre!("Icon path was not valid UTF-8"))?,
     )?;
 
     let handle = std::thread::Builder::new()
         .name("systray".to_owned())
-        .spawn(move || app.wait_for_message().map_err(anyhow::Error::from))?;
+        .spawn(move || app.wait_for_message().map_err(eyre::Error::from))?;
 
     Ok((utils::JoinOnDrop::new(logger.clone(), handle), rx))
 }
@@ -229,7 +229,7 @@ async fn main() -> Result<()> {
 
                     Some(Message::CopyImage) => {
                         match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
-                            .map_err(anyhow::Error::from)
+                            .map_err(eyre::Error::from)
                             .and_then(|reader| Ok(reader.with_guessed_format()?.decode()?))
                             .and_then(|img| platform::copy_image(img.into_rgba()))
                         {
