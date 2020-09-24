@@ -1,6 +1,6 @@
 use std::{io, path::Path};
 
-use anyhow::{ensure, Context, Result};
+use eyre::{ensure, Result, WrapErr};
 use image::RgbaImage;
 
 macro_rules! wintry {
@@ -32,7 +32,7 @@ pub fn set_background(path: &Path) -> Result<()> {
     wintry!(unsafe {
         SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, path_utf16.as_ptr() as *mut _, 0)
     })
-    .context(format!("Failed to set background to {:?}", path))
+    .wrap_err(format!("Failed to set background to {:?}", path))
 }
 
 #[cfg(windows)]
@@ -43,7 +43,8 @@ pub fn copy_image(img: RgbaImage) -> Result<()> {
     };
 
     // Open the clipboard
-    wintry!(unsafe { OpenClipboard(GetForegroundWindow()) }).context("Failed to open clipboard")?;
+    wintry!(unsafe { OpenClipboard(GetForegroundWindow()) })
+        .wrap_err("Failed to open clipboard")?;
 
     // Create the bitmap to be copied
     let w = img.width();
@@ -54,14 +55,14 @@ pub fn copy_image(img: RgbaImage) -> Result<()> {
 
     // Set the clipboard data to it
     let set_result = wintry!(unsafe { SetClipboardData(CF_BITMAP, bmp as *mut _) } as usize)
-        .context("Failed to set clipboard data");
+        .wrap_err("Failed to set clipboard data");
 
     // Free the bitmap memory
     let delete_result =
-        wintry!(unsafe { DeleteObject(bmp as *mut _) }).context("Failed to delete bitmap object");
+        wintry!(unsafe { DeleteObject(bmp as *mut _) }).wrap_err("Failed to delete bitmap object");
 
     // Close the clipboard
-    let close_result = wintry!(unsafe { CloseClipboard() }).context("Failed to close clipboard");
+    let close_result = wintry!(unsafe { CloseClipboard() }).wrap_err("Failed to close clipboard");
 
     // Now, check that all operations succeeded. We do this because we still
     // want to delete the bitmap object and close the clipboard even if any
