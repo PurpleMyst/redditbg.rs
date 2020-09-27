@@ -1,5 +1,6 @@
 use eyre::{Result, WrapErr};
 use futures::prelude::*;
+use image::ImageFormat;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use slog::{info, o, trace, warn, Logger};
@@ -12,13 +13,15 @@ use crate::DIRS;
 const MAX_CACHED: usize = 25;
 
 /// Append a generated filename for an url to the given path buffer
-fn make_filename(path: &mut std::path::PathBuf, url: &str) {
+fn make_filename(path: &mut std::path::PathBuf, url: &str, image_format: ImageFormat) {
     let mut hasher = Sha256::new();
     hasher.input(url);
     let hash = hasher.result();
-    // As far as I can tell the image crate has no way to get the extension for a given format
-    // TODO: ^ that's a lie thanks to my github issue
-    path.push(format!("{:x}.dat", hash));
+    path.push(format!(
+        "{:x}.{}",
+        hash,
+        image_format.extensions_str().get(0).unwrap_or(&"dat")
+    ));
 }
 
 async fn download_count() -> Result<usize> {
@@ -30,7 +33,6 @@ async fn download_count() -> Result<usize> {
 }
 
 /// Download one image into its place
-// TODO: we can probably extract more images
 async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     // Fetch the image's body
     let body: bytes::Bytes = with_backoff!(|| client
@@ -42,17 +44,21 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     trace!(logger, "got body"; "size" => body.len());
 
     // Verify that it looks like an image
-    match ::image::guess_format(&body) {
-        Ok(fmt) => info!(logger, "got image"; "format" => ?fmt),
+    let image_format = match image::guess_format(&body) {
+        Ok(image_format) => {
+            info!(logger, "got image"; "format" => ?image_format);
+            image_format
+        }
+
         Err(err) => {
             info!(logger, "not image");
             return Err(err.into());
         }
-    }
+    };
 
     // Let's calculate the path we want
     let mut path = DIRS.data_local_dir().join("images");
-    make_filename(&mut path, &url);
+    make_filename(&mut path, &url, image_format);
 
     // Now we'll write it to a temporary file that will then be *atomically* persisted once it's all written
     // The use of `spawn_blocking` means that once we start writing an image we *will* write an image
