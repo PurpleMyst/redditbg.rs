@@ -51,7 +51,7 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
         }
 
         Err(err) => {
-            info!(logger, "not image");
+            trace!(logger, "not image");
             return Err(err.into());
         }
     };

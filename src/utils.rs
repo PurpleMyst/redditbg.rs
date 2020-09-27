@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 use eyre::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
 use sha2::{Digest, Sha256};
-use slog::{debug, error, info, warn, Logger};
+use slog::{debug, error, warn, Logger};
 use tokio::{fs, io, prelude::*};
 
 use crate::DIRS;
@@ -31,7 +31,7 @@ pub struct PersistentSet {
 impl PersistentSet {
     pub async fn load(logger: Logger, name: &'static str) -> Result<Self> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", name));
-        info!(logger, "loading persistent set"; "path" => ?path);
+        debug!(logger, "loading persistent set"; "path" => ?path);
 
         let file = match fs::OpenOptions::new().read(true).open(path).await {
             Ok(file) => file,
@@ -69,7 +69,7 @@ impl PersistentSet {
 
     pub async fn store(self) -> Result<()> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", self.name));
-        info!(self.logger, "storing persistent set"; "path" => ?path);
+        debug!(self.logger, "storing persistent set"; "path" => ?path);
         let contents = self.contents.into_iter().collect::<Vec<_>>().join("\n");
         let mut file = fs::OpenOptions::new()
             .write(true)
