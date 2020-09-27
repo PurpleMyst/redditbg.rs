@@ -2,7 +2,7 @@ use eyre::{Result, WrapErr};
 use futures::prelude::*;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use slog::{debug, info, o, warn, Logger};
+use slog::{info, o, trace, warn, Logger};
 use tokio::fs;
 
 use crate::utils::PersistentSet;
@@ -39,7 +39,7 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
         .send()
         .and_then(|response| response.bytes()))
     .wrap_err_with(|| format!("Failed to fetch {:?}", url))?;
-    info!(logger, "got body"; "size" => body.len());
+    trace!(logger, "got body"; "size" => body.len());
 
     // Verify that it looks like an image
     match ::image::guess_format(&body) {
@@ -64,11 +64,11 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     tokio::task::spawn_blocking(move || -> Result<()> {
         use std::io::prelude::*;
         let mut file = tempfile::NamedTempFile::new()?;
-        debug!(logger, "created temporary file"; "path" => ?file.path());
+        trace!(logger, "created temporary file"; "path" => ?file.path());
         file.write_all(&body).wrap_err("writing body")?;
-        debug!(logger, "flushing temporary file");
+        trace!(logger, "flushing temporary file");
         file.flush().wrap_err("flushing")?;
-        debug!(logger, "persisting temporary file"; "path" => ?path);
+        trace!(logger, "persisting temporary file"; "path" => ?path);
         file.persist(path).wrap_err("persisting")?;
         Ok(())
     })
