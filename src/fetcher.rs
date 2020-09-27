@@ -92,7 +92,7 @@ where
         .map(|url| {
             let logger = logger.new(o!("url" => url.clone()));
             fetch_one(logger.clone(), client, url)
-                .map_err(move |err| warn!(logger, "failed fetching"; "error" => ?err))
+                .map_err(move |err| warn!(logger, "failed fetching"; "error" => %err))
         })
         // Instead of polling in order, take a block of 25 and poll them all at once
         .buffer_unordered(25)

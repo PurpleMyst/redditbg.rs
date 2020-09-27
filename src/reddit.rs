@@ -115,7 +115,7 @@ impl<'a> Stream for Posts<'a> {
                         Err(err) => {
                             // We've already got backoff baked into `get_next_page`, we probably can't recover here
                             // It's best if we just stop giving out posts
-                            warn!(self.logger, "error while fetching posts"; "error" => ?err);
+                            warn!(self.logger, "error while fetching posts"; "error" => %err);
                             self.state = PostsState::Exhausted;
                         }
                     }

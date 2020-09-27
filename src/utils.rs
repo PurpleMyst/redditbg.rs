@@ -36,7 +36,7 @@ impl PersistentSet {
         let file = match fs::OpenOptions::new().read(true).open(path).await {
             Ok(file) => file,
             Err(err) => {
-                warn!(logger, "failed to open persistent set"; "name" => name, "error" => ?err);
+                warn!(logger, "failed to open persistent set"; "name" => name, "error" => %err);
                 return Ok(Self {
                     logger,
                     name,
@@ -156,7 +156,7 @@ impl Drop for JoinOnDrop {
         match self.handle.take().unwrap().join() {
             Ok(Ok(())) => debug!(self.logger, "child thread joined"),
 
-            Ok(Err(err)) => error!(self.logger, "child thread returned error"; "error" => ?err),
+            Ok(Err(err)) => error!(self.logger, "child thread returned error"; "error" => %err),
 
             Err(err) => {
                 let err: &dyn std::fmt::Display = if let Some(err) = err.downcast_ref::<String>() {
