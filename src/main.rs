@@ -5,11 +5,10 @@ use std::{convert::Infallible, time::Duration};
 
 use directories::ProjectDirs;
 use eyre::{Result, WrapErr};
+use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use futures::prelude::*;
 use reqwest::Client;
 use slog::{debug, error, info, o, Logger};
-
-use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use tokio::{fs, time::delay_for};
 
 lazy_static::lazy_static! {
@@ -97,10 +96,13 @@ fn setup_logging() -> Result<slog::Logger> {
         slog_term::CompactFormat::new(decorator).build().fuse()
     };
 
-    let drain3 = platform::NotifyOnError {
+    let drain3 = platform::NotifyDrain {
         title: env!("CARGO_PKG_NAME").into(),
         icon: ICON_PATH.into(),
     }
+    .filter(|record| {
+        record.level().is_at_least(slog::Level::Error) || record.tag() == "notification"
+    })
     .ignore_res();
 
     let drain = slog::Duplicate::new(drain1, drain2).fuse();
@@ -235,7 +237,7 @@ async fn main() -> Result<()> {
                             .and_then(|reader| Ok(reader.with_guessed_format()?.decode()?))
                             .and_then(|img| platform::copy_image(img.into_rgba()))
                         {
-                            Ok(()) => info!(logger, "copied image"),
+                            Ok(()) => info!(logger, #"notification", "copied image"),
 
                             // TODO: Show tray notification
                             Err(error) => {
