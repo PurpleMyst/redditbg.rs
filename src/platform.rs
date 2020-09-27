@@ -2,6 +2,7 @@ use std::{io, path::Path, path::PathBuf};
 
 use eyre::{ensure, eyre, Result, WrapErr};
 use image::RgbaImage;
+use slog::KV;
 
 macro_rules! wintry {
     ($expr:expr) => {
@@ -70,66 +71,51 @@ pub fn copy_image(img: RgbaImage) -> Result<()> {
     set_result.and(delete_result).and(close_result)
 }
 
-pub struct NotifyOnError {
+pub struct NotifyDrain {
     pub title: String,
     pub icon: PathBuf,
 }
 
-struct FindKey {
-    key: &'static str,
-    value: Option<String>,
+#[derive(Default)]
+struct Text2Serializer {
+    result: String,
 }
 
-impl slog::Serializer for FindKey {
+impl slog::Serializer for Text2Serializer {
     fn emit_arguments(&mut self, key: slog::Key, val: &std::fmt::Arguments) -> slog::Result {
-        if key == self.key {
-            self.value = Some(format!("{}", val));
+        if !self.result.is_empty() {
+            self.result += " | ";
         }
+
+        self.result += &format!("{}: {}", key, val);
 
         Ok(())
     }
 }
 
-impl FindKey {
-    fn find_key(key: &'static str, record: &slog::Record, kv: impl slog::KV) -> Option<String> {
-        let mut this = Self { key, value: None };
-        let _ = kv.serialize(record, &mut this);
-        this.value
-    }
-}
-
-impl slog::Drain for NotifyOnError {
+impl slog::Drain for NotifyDrain {
     type Ok = ();
 
     type Err = eyre::Report;
 
     #[cfg(windows)]
-    fn log(
-        &self,
-        record: &slog::Record,
-        values: &slog::OwnedKVList,
-    ) -> Result<Self::Ok, Self::Err> {
+    fn log(&self, record: &slog::Record, kv: &slog::OwnedKVList) -> Result<Self::Ok, Self::Err> {
         use winrt_notification::{Duration, IconCrop, Toast};
 
-        if !record.level().is_at_least(slog::Level::Error) {
-            return Ok(());
-        }
+        let mut text2_ser = Text2Serializer::default();
+        let _ = record.kv().serialize(record, &mut text2_ser);
+        let _ = kv.serialize(record, &mut text2_ser);
 
         Toast::new(Toast::POWERSHELL_APP_ID)
-            .title(&self.title)
-            .text1(&format!(
-                "{}:{}:{}",
+            .title(&format!(
+                "{} ({}:{}:{})",
+                self.title,
                 record.file(),
                 record.line(),
                 record.column()
             ))
-            .text2(
-                &if let Some(error) = FindKey::find_key("error", record, values) {
-                    format!("{} ({})", record.msg(), error)
-                } else {
-                    format!("{}", record.msg())
-                },
-            )
+            .text1(&format!("{}", record.msg()))
+            .text2(&text2_ser.result)
             .duration(Duration::Short)
             .icon(
                 &self.icon,
