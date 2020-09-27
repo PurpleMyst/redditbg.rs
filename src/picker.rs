@@ -25,10 +25,10 @@ pub async fn pick(logger: Logger) -> Result<DynamicImage> {
                 Ok(image) => Some((path, image)),
 
                 Err(err) => {
-                    warn!(logger, "could not parse image"; "error" => ?err);
+                    warn!(logger, "could not parse image"; "error" => %err);
                     debug!(logger, "removing image");
                     if let Err(err) = std::fs::remove_file(&path) {
-                        warn!(logger, "error while removing"; "error" => ?err);
+                        warn!(logger, "error while removing"; "error" => %err);
                     }
                     None
                 }

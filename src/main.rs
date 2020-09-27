@@ -149,7 +149,7 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
             info!(logger, "sending message"; "message" => "change now");
 
             if let Err(err) = tx.unbounded_send(Message::ChangeNow) {
-                error!(logger, "could not send message"; "error" => ?err);
+                error!(logger, "could not send message"; "error" => %err);
             }
 
             Ok(())
@@ -165,7 +165,7 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
                 info!(logger, "sending message"; "message" => "copy image");
 
                 if let Err(err) = tx.unbounded_send(Message::CopyImage) {
-                    error!(logger, "could not send message"; "error" => ?err);
+                    error!(logger, "could not send message"; "error" => %err);
                 }
 
                 Ok(())
@@ -180,12 +180,12 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
 
             // at this point i'm praying this works
             if let Err(err) = app.shutdown() {
-                error!(logger, "shutdown failed"; "error" => ?err);
+                error!(logger, "shutdown failed"; "error" => %err);
             }
             app.quit();
 
             if let Err(err) = tx.unbounded_send(Message::Quit) {
-                error!(logger, "could not send message"; "error" => ?err);
+                error!(logger, "could not send message"; "error" => %err);
             }
 
             Ok(())
@@ -214,7 +214,7 @@ async fn main() -> Result<()> {
 
         match find_new_background(&logger, &client).await {
             Ok(()) => info!(logger, "set background successfully"),
-            Err(err) => error!(logger, "error while finding new background"; "error" => ?err),
+            Err(err) => error!(logger, "error while finding new background"; "error" => %err),
         }
 
         loop {
@@ -241,7 +241,7 @@ async fn main() -> Result<()> {
 
                             // TODO: Show tray notification
                             Err(error) => {
-                                error!(logger, "copy image error"; "error" => ?error);
+                                error!(logger, "copy image error"; "error" => %error);
                             }
                         }
                     }
