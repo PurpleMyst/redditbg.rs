@@ -2,7 +2,7 @@ use std::fs;
 
 use eyre::{eyre, Result};
 use image::DynamicImage;
-use slog::{debug, info, o, warn, Logger};
+use slog::{Logger, debug, info, o, trace, warn};
 
 use crate::DIRS;
 
@@ -35,8 +35,10 @@ pub async fn pick(logger: Logger) -> Result<DynamicImage> {
             }
         })
         .ok_or_else(|| eyre!("Could not find a valid image"))?;
+    info!(logger, "picked next background"; "path" => ?path);
+
     // Remove the original file
-    info!(logger, "removing original file"; "path" => ?path);
+    trace!(logger, "removing original file"; "path" => ?path);
     fs::remove_file(path)?;
 
     Ok(image)
