@@ -40,12 +40,17 @@ pub fn set_background(path: &Path) -> Result<()> {
 pub fn copy_image(img: RgbaImage) -> Result<()> {
     use winapi::um::wingdi::{CreateBitmap, DeleteObject};
     use winapi::um::winuser::{
-        CloseClipboard, GetForegroundWindow, OpenClipboard, SetClipboardData, CF_BITMAP,
+        CloseClipboard, EmptyClipboard, GetForegroundWindow, OpenClipboard, SetClipboardData,
+        CF_BITMAP,
     };
 
     // Open the clipboard
     wintry!(unsafe { OpenClipboard(GetForegroundWindow()) })
         .wrap_err("Failed to open clipboard")?;
+
+    // Emptythe clipboard
+    // For whatever reason you can't overwrite it if it's got an image in it. ¯\_(ツ)_/¯
+    wintry!(unsafe { EmptyClipboard() }).wrap_err("Failed to empty clipboard")?;
 
     // Create the bitmap to be copied
     let w = img.width();
