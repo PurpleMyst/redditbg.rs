@@ -110,7 +110,7 @@ fn setup_dirs() -> Result<()> {
     Ok(())
 }
 
-fn setup_logging() -> Result<slog::Logger> {
+fn setup_logging() -> slog::Logger {
     use slog::Drain;
 
     let file = file_rotator::RotatingFile::new(
@@ -143,7 +143,7 @@ fn setup_logging() -> Result<slog::Logger> {
 
     let drain = slog_async::Async::new(drain).build().fuse();
 
-    Ok(slog::Logger::root(drain, slog::o!()))
+    slog::Logger::root(drain, slog::o!())
 }
 
 fn setup_client() -> Result<Client> {
@@ -238,7 +238,7 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_dirs()?;
-    let logger = setup_logging()?;
+    let logger = setup_logging();
     let (_guard, mut messages) = setup_systray(logger.new(o!("state" => "systray")))?;
     let client = setup_client()?;
 

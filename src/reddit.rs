@@ -17,9 +17,14 @@ pub struct Posts<'a> {
     state: PostsState,
 }
 
+struct Page {
+    next_page_id: Option<String>,
+    posts: Vec<String>,
+}
+
 enum PostsState {
     NeedMore,
-    Fetching(Pin<Box<dyn Future<Output = Result<(Option<String>, Vec<String>)>>>>),
+    Fetching(Pin<Box<dyn Future<Output = Result<Page>>>>),
     Fetched(Vec<String>),
     Exhausted,
 }
@@ -35,7 +40,7 @@ impl<'a> Posts<'a> {
         }
     }
 
-    fn get_next_page(&mut self) -> impl Future<Output = Result<(Option<String>, Vec<String>)>> {
+    fn get_next_page(&mut self) -> impl Future<Output = Result<Page>> {
         // Spin up the request builder at the correct URL
         let url = format!(
             "https://reddit.com/r/{}/new.json",
@@ -71,16 +76,17 @@ impl<'a> Posts<'a> {
                 .map(ToOwned::to_owned);
 
             // Now let's navigate the tree that Reddit gives us to get what we want
-            Ok((
+            Ok(Page {
                 next_page_id,
-                data.get_mut("children")
+                posts: data
+                    .get_mut("children")
                     .ok_or_else(|| eyre!("Toplevel data did not contain children"))?
                     .as_array()
                     .ok_or_else(|| eyre!("Toplevel children were not an array"))?
                     .iter()
                     .filter_map(|child| Some(child.get("data")?.get("url")?.as_str()?.to_owned()))
                     .collect(),
-            ))
+            })
         }
     }
 }
@@ -107,7 +113,10 @@ impl<'a> Stream for Posts<'a> {
 
                     match posts {
                         // If we've got posts, move on to the next state
-                        Ok((next_page_id, posts)) => {
+                        Ok(Page {
+                            next_page_id,
+                            posts,
+                        }) => {
                             self.next_page_id = next_page_id;
                             self.state = PostsState::Fetched(posts);
                         }
@@ -125,15 +134,13 @@ impl<'a> Stream for Posts<'a> {
                 PostsState::Fetched(ref mut posts) => {
                     if let Some(post) = posts.pop() {
                         return Poll::Ready(Some(post));
+                    } else if self.next_page_id.is_some() {
+                        self.state = PostsState::NeedMore;
                     } else {
-                        if self.next_page_id.is_some() {
-                            self.state = PostsState::NeedMore;
-                        } else {
-                            // If the previous page had no "after", it's probably best to mark ourselves as exhausted
-                            // So that we can avoid entering a sort of "cycle"
-                            warn!(self.logger, "missing next_page_id");
-                            self.state = PostsState::Exhausted;
-                        }
+                        // If the previous page had no "after", it's probably best to mark ourselves as exhausted
+                        // So that we can avoid entering a sort of "cycle"
+                        warn!(self.logger, "missing next_page_id");
+                        self.state = PostsState::Exhausted;
                     }
                 }
 
