@@ -1,4 +1,4 @@
-use eyre::{Result, WrapErr};
+use eyre::{bail, Result, WrapErr};
 use futures::prelude::*;
 use image::ImageFormat;
 use reqwest::Client;
@@ -52,7 +52,7 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
 
         Err(err) => {
             trace!(logger, "not image");
-            return Err(err.into());
+            bail!(err);
         }
     };
 
