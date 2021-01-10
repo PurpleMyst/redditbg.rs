@@ -55,8 +55,10 @@ impl<'a> Posts<'a> {
 
         // *puts on sunglasses* Now it's time to enter the matrix
         async {
-            // Here we make our retry-able future that just sends out the response and parses it as JSON
-            // It's important that the json parsing bit is in the retry part cause the response body is read incrementally
+            // Here we make our retryable future that just sends out the
+            // response and parses it as JSON. It's important that we parse the
+            // response into JSON inside the retryable future because RequestBuilder::send()
+            // does not actually consume the response
             let mut listing: Value = with_backoff!(move || {
                 req_builder
                     .try_clone()
