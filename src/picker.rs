@@ -1,10 +1,21 @@
 use std::fs;
 
-use eyre::{eyre, Result};
+use eyre::Result;
 use image::DynamicImage;
-use slog::{Logger, debug, info, o, trace, warn};
+use slog::{debug, info, o, trace, warn, Logger};
 
 use crate::DIRS;
+
+#[derive(Debug)]
+pub struct NoValidImage;
+
+impl std::fmt::Display for NoValidImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad("no valid image")
+    }
+}
+
+impl std::error::Error for NoValidImage {}
 
 // FIXME: use tokio::fs
 pub async fn pick(logger: Logger) -> Result<DynamicImage> {
@@ -34,11 +45,11 @@ pub async fn pick(logger: Logger) -> Result<DynamicImage> {
                 }
             }
         })
-        .ok_or_else(|| eyre!("Could not find a valid image"))?;
-    info!(logger, "picked next background"; "path" => ?path);
+        .ok_or(NoValidImage)?;
+    info!(logger, "picked next background"; "path" => %path.display());
 
     // Remove the original file
-    trace!(logger, "removing original file"; "path" => ?path);
+    trace!(logger, "removing original file"; "path" => %path.display());
     fs::remove_file(path)?;
 
     Ok(image)

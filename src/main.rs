@@ -4,7 +4,7 @@
 use std::{convert::Infallible, time::Duration};
 
 use directories::ProjectDirs;
-use eyre::{Result, WrapErr};
+use eyre::{bail, Result, WrapErr};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver};
 use futures::prelude::*;
 use reqwest::Client;
@@ -37,20 +37,48 @@ async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
 
     let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
 
-    // Get the list of images from reddit
-    let posts = reddit::Posts::new(
-        logger.new(o!("state" => "getting posts")),
-        client,
-        &subreddits,
-    );
-    info!(logger, "got posts");
+    // Make a closure that tells fetches our images
+    let mut already_fetched = false;
+    let do_fetch = || async {
+        // Get the list of images from reddit
+        let posts = reddit::Posts::new(
+            logger.new(o!("state" => "getting posts")),
+            client,
+            &subreddits,
+        );
+        info!(logger, "got posts");
 
-    // Fetch them and save them to the filesystem
-    let fetched = fetcher::fetch(logger.new(o!("state" => "fetching")), client, posts).await?;
-    info!(logger, "fetched"; "count" => fetched);
+        // Fetch them
+        let fetched = fetcher::fetch(logger.new(o!("state" => "fetching")), client, posts).await?;
+        info!(logger, "fetched"; "count" => fetched);
 
-    // Choose one
-    let picked = picker::pick(logger.new(o!("state" => "picking"))).await?;
+        Result::<(), eyre::Report>::Ok(())
+    };
+
+    let picked = {
+        let logger = logger.new(o!("state" => "picking"));
+
+        // Try to pick an image from the ones we've already fetched, so that we
+        // don't make our user wait too long in the case that they don't have
+        // internet access at the present moment
+        match picker::pick(logger.clone()).await {
+            // If that succeeds, just return it
+            Ok(img) => img,
+
+            Err(err) => {
+                if let Some(picker::NoValidImage) = err.downcast_ref() {
+                    debug!(logger, "found no valid image on first try");
+                    // Otherwise, if we found no valid image, try to fetch them and pick again
+                    do_fetch().await?;
+                    already_fetched = true;
+                    picker::pick(logger).await?
+                } else {
+                    // If we got any other error, bail and return it to the caller
+                    bail!(err);
+                }
+            }
+        }
+    };
 
     debug!(logger, "resizing background");
     let (w, h) = utils::screen_size()?;
@@ -58,12 +86,17 @@ async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
 
     // Save it to the filesystem so that we can set it
     let path = DIRS.cache_dir().join("background.png");
-    debug!(logger, "saving background"; "path" => ?path);
+    debug!(logger, "saving background"; "path" => %path.display());
     picked.save(&path)?;
 
     // Set it as a background
     debug!(logger, "setting background");
     platform::set_background(&path)?;
+
+    // If we didn't fetch while picking the image, do so after setting the background
+    if !already_fetched {
+        do_fetch().await?;
+    }
 
     Ok(())
 }
