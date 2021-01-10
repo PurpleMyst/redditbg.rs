@@ -74,7 +74,7 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
         file.write_all(&body).wrap_err("writing body")?;
         trace!(logger, "flushing temporary file");
         file.flush().wrap_err("flushing")?;
-        trace!(logger, "persisting temporary file"; "path" => ?path);
+        trace!(logger, "persisting temporary file"; "path" => %path.display());
         file.persist(path).wrap_err("persisting")?;
         Ok(())
     })

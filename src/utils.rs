@@ -30,13 +30,15 @@ pub struct PersistentSet {
 
 impl PersistentSet {
     pub async fn load(logger: Logger, name: &'static str) -> Result<Self> {
+        // We use this in all subsequent logging calls rather than setting it as
+        // a logger value because that introduces weird borrowck things
         let path = DIRS.data_local_dir().join(format!("{}.txt", name));
-        debug!(logger, "loading persistent set"; "path" => ?path);
 
-        let file = match fs::OpenOptions::new().read(true).open(path).await {
+        debug!(logger, "loading persistent set"; "path" => %path.display());
+        let file = match fs::OpenOptions::new().read(true).open(&path).await {
             Ok(file) => file,
             Err(err) => {
-                warn!(logger, "failed to open persistent set"; "name" => name, "error" => %err);
+                warn!(logger, "failed to open persistent set"; "name" => name, "error" => %err, "path" => %path.display());
                 return Ok(Self {
                     logger,
                     name,
@@ -48,6 +50,7 @@ impl PersistentSet {
         let mut reader = io::BufReader::new(file);
         let mut contents = HashSet::new();
 
+        // TODO: refactor this to use BufRead::lines
         loop {
             let mut line = String::new();
             let read = reader.read_line(&mut line).await?;
@@ -60,6 +63,7 @@ impl PersistentSet {
             }
             contents.insert(line);
         }
+        debug!(logger, "loaded persistent set"; "path" => %path.display());
         Ok(Self {
             logger,
             name,
@@ -69,7 +73,7 @@ impl PersistentSet {
 
     pub async fn store(self) -> Result<()> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", self.name));
-        debug!(self.logger, "storing persistent set"; "path" => ?path);
+        debug!(self.logger, "storing persistent set"; "path" => %path.display());
         let contents = self.contents.into_iter().collect::<Vec<_>>().join("\n");
         let mut file = fs::OpenOptions::new()
             .write(true)
