@@ -84,7 +84,16 @@ impl<'a> Posts<'a> {
                     .as_array()
                     .ok_or_else(|| eyre!("Toplevel children were not an array"))?
                     .iter()
-                    .filter_map(|child| Some(child.get("data")?.get("url")?.as_str()?.to_owned()))
+                    .filter_map(|child| {
+                        let data = child.get("data")?;
+
+                        if !data.get("over_18")?.as_bool()? {
+                            Some(data.get("url")?.as_str()?.to_owned())
+                        } else {
+                            // skip over NSFW wallpapers
+                            None
+                        }
+                    })
                     .collect(),
             })
         }
