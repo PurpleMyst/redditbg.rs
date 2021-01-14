@@ -268,7 +268,7 @@ async fn main() -> Result<()> {
                         match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
                             .map_err(eyre::Error::from)
                             .and_then(|reader| Ok(reader.with_guessed_format()?.decode()?))
-                            .and_then(|img| platform::copy_image(img.into_rgba()))
+                            .and_then(|img| platform::copy_image(img))
                         {
                             Ok(()) => info!(logger, #"notification", "copied image"),
 
