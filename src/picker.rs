@@ -26,7 +26,7 @@ pub async fn pick(logger: Logger) -> Result<DynamicImage> {
             let entry = entry.ok()?;
             let path = entry.path();
 
-            let logger = logger.new(o!("path" => path.to_string_lossy().into_owned()));
+            let logger = logger.new(o!("path" => path.display().to_string()));
 
             let maybe_image = image::io::Reader::open(&path)
                 .map_err(eyre::Error::from)
