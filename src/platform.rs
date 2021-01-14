@@ -1,7 +1,6 @@
 use std::{io, path::Path, path::PathBuf};
 
 use eyre::{ensure, eyre, Result, WrapErr};
-use image::RgbaImage;
 use slog::KV;
 
 macro_rules! wintry {
@@ -37,12 +36,14 @@ pub fn set_background(path: &Path) -> Result<()> {
 }
 
 #[cfg(windows)]
-pub fn copy_image(img: RgbaImage) -> Result<()> {
+pub fn copy_image(img: image::DynamicImage) -> Result<()> {
     use winapi::um::wingdi::{CreateBitmap, DeleteObject};
     use winapi::um::winuser::{
         CloseClipboard, EmptyClipboard, GetForegroundWindow, OpenClipboard, SetClipboardData,
         CF_BITMAP,
     };
+
+    let img = img.to_bgra();
 
     // Open the clipboard
     wintry!(unsafe { OpenClipboard(GetForegroundWindow()) })
