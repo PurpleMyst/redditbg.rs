@@ -4,6 +4,7 @@ use eyre::Result;
 use image::DynamicImage;
 use slog::{debug, info, o, trace, warn, Logger};
 
+use crate::utils::ReportValue;
 use crate::DIRS;
 
 #[derive(Debug)]
@@ -35,11 +36,11 @@ pub async fn pick(logger: Logger) -> Result<DynamicImage> {
             match maybe_image {
                 Ok(image) => Some((path, image)),
 
-                Err(err) => {
-                    warn!(logger, "could not parse image"; "error" => %err);
+                Err(error) => {
+                    warn!(logger, "could not parse image"; "error" => ReportValue(error));
                     debug!(logger, "removing image");
-                    if let Err(err) = std::fs::remove_file(&path) {
-                        warn!(logger, "error while removing"; "error" => %err);
+                    if let Err(error) = std::fs::remove_file(&path) {
+                        warn!(logger, "error while removing"; "error" => ReportValue(error.into()));
                     }
                     None
                 }

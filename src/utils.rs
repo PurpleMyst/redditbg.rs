@@ -37,8 +37,8 @@ impl PersistentSet {
         debug!(logger, "loading persistent set"; "path" => %path.display());
         let file = match fs::OpenOptions::new().read(true).open(&path).await {
             Ok(file) => file,
-            Err(err) => {
-                warn!(logger, "failed to open persistent set"; "name" => name, "error" => %err, "path" => %path.display());
+            Err(error) => {
+                warn!(logger, "failed to open persistent set"; "name" => name, "error" => ReportValue(error.into()), "path" => %path.display());
                 return Ok(Self {
                     logger,
                     name,
@@ -160,19 +160,35 @@ impl Drop for JoinOnDrop {
         match self.handle.take().unwrap().join() {
             Ok(Ok(())) => debug!(self.logger, "child thread joined"),
 
-            Ok(Err(err)) => error!(self.logger, "child thread returned error"; "error" => %err),
+            Ok(Err(error)) => {
+                error!(self.logger, "child thread returned error"; "error" => ReportValue(error))
+            }
 
-            Err(err) => {
-                let err: &dyn std::fmt::Display = if let Some(err) = err.downcast_ref::<String>() {
-                    err
-                } else if let Some(err) = err.downcast_ref::<&'static str>() {
-                    err
-                } else {
-                    &"not of known type"
-                };
+            Err(error) => {
+                let error: &dyn std::fmt::Display =
+                    if let Some(error) = error.downcast_ref::<String>() {
+                        error
+                    } else if let Some(error) = error.downcast_ref::<&'static str>() {
+                        error
+                    } else {
+                        &"not of known type"
+                    };
 
-                error!(self.logger, "child thread panic"; "error" => %err)
+                error!(self.logger, "child thread panic"; "error" => %error)
             }
         }
+    }
+}
+
+pub struct ReportValue(pub eyre::Report);
+
+impl slog::Value for ReportValue {
+    fn serialize(
+        &self,
+        record: &slog::Record,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        format_args!("{:#}", self.0).serialize(record, key, serializer)
     }
 }

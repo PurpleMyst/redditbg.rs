@@ -7,6 +7,7 @@ use reqwest::Client;
 use serde_json::Value;
 use slog::{warn, Logger};
 
+use crate::utils::ReportValue;
 use crate::with_backoff;
 
 pub struct Posts<'a> {
@@ -132,10 +133,10 @@ impl<'a> Stream for Posts<'a> {
                             self.state = PostsState::Fetched(posts);
                         }
 
-                        Err(err) => {
+                        Err(error) => {
                             // We've already got backoff baked into `get_next_page`, we probably can't recover here
                             // It's best if we just stop giving out posts
-                            warn!(self.logger, "error while fetching posts"; "error" => %err);
+                            warn!(self.logger, "error while fetching posts"; "error" => ReportValue(error));
                             self.state = PostsState::Exhausted;
                         }
                     }
