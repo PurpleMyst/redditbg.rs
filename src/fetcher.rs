@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use slog::{info, o, trace, warn, Logger};
 use tokio::fs;
 
-use crate::utils::PersistentSet;
+use crate::utils::{PersistentSet, ReportValue};
 use crate::DIRS;
 
 // This value is kinda arbitrary but there are 25 potential images in one reddit page
@@ -97,8 +97,9 @@ where
         // Start downloading them, not necessarily in order
         .map(|url| {
             let logger = logger.new(o!("url" => url.clone()));
-            fetch_one(logger.clone(), client, url)
-                .map_err(move |err| warn!(logger, "failed fetching"; "error" => %err))
+            fetch_one(logger.clone(), client, url).map_err(
+                move |error| warn!(logger, "failed fetching"; "error" => ReportValue(error)),
+            )
         })
         // Instead of polling in order, take a block of 25 and poll them all at once
         .buffer_unordered(25)

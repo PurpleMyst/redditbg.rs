@@ -21,6 +21,7 @@ lazy_static::lazy_static! {
 
 #[macro_use]
 mod utils;
+use utils::ReportValue;
 
 mod reddit;
 
@@ -181,8 +182,8 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
         app.add_menu_item("Change now", move |_app| -> Result<(), Infallible> {
             info!(logger, "sending message"; "message" => "change now");
 
-            if let Err(err) = tx.unbounded_send(Message::ChangeNow) {
-                error!(logger, "could not send message"; "error" => %err);
+            if let Err(error) = tx.unbounded_send(Message::ChangeNow) {
+                error!(logger, "could not send message"; "error" => ReportValue(error.into()));
             }
 
             Ok(())
@@ -197,8 +198,8 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
             move |_app| -> Result<(), Infallible> {
                 info!(logger, "sending message"; "message" => "copy image");
 
-                if let Err(err) = tx.unbounded_send(Message::CopyImage) {
-                    error!(logger, "could not send message"; "error" => %err);
+                if let Err(error) = tx.unbounded_send(Message::CopyImage) {
+                    error!(logger, "could not send message"; "error" => ReportValue(error.into()));
                 }
 
                 Ok(())
@@ -212,13 +213,13 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
             info!(logger, "sending message"; "message" => "quit");
 
             // at this point i'm praying this works
-            if let Err(err) = app.shutdown() {
-                error!(logger, "shutdown failed"; "error" => %err);
+            if let Err(error) = app.shutdown() {
+                error!(logger, "shutdown failed"; "error" => ReportValue(error.into()));
             }
             app.quit();
 
-            if let Err(err) = tx.unbounded_send(Message::Quit) {
-                error!(logger, "could not send message"; "error" => %err);
+            if let Err(error) = tx.unbounded_send(Message::Quit) {
+                error!(logger, "could not send message"; "error" => ReportValue(error.into()));
             }
 
             Ok(())
@@ -247,7 +248,9 @@ async fn main() -> Result<()> {
 
         match find_new_background(&logger, &client).await {
             Ok(()) => info!(logger, "set background successfully"),
-            Err(err) => error!(logger, "error while finding new background"; "error" => %err),
+            Err(error) => {
+                error!(logger, "error while finding new background"; "error" => ReportValue(error))
+            }
         }
 
         loop {
@@ -267,14 +270,13 @@ async fn main() -> Result<()> {
                     Some(Message::CopyImage) => {
                         match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
                             .map_err(eyre::Error::from)
-                            .and_then(|reader| Ok(reader.with_guessed_format()?.decode()?))
-                            .and_then(|img| platform::copy_image(img))
+                            .and_then(|reader| platform::copy_image(reader.with_guessed_format()?.decode()?))
                         {
                             Ok(()) => info!(logger, #"notification", "copied image"),
 
                             // TODO: Show tray notification
                             Err(error) => {
-                                error!(logger, "copy image error"; "error" => %error);
+                                error!(logger, "copy image error"; "error" => ReportValue(error));
                             }
                         }
                     }
