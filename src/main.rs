@@ -274,7 +274,6 @@ async fn main() -> Result<()> {
                         {
                             Ok(()) => info!(logger, #"notification", "copied image"),
 
-                            // TODO: Show tray notification
                             Err(error) => {
                                 error!(logger, "copy image error"; "error" => ReportValue(error));
                             }
