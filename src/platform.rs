@@ -43,7 +43,7 @@ pub fn copy_image(img: image::DynamicImage) -> Result<()> {
         CF_BITMAP,
     };
 
-    let img = img.to_bgra();
+    let img = img.to_bgra8();
 
     // Open the clipboard
     wintry!(unsafe { OpenClipboard(GetForegroundWindow()) })
