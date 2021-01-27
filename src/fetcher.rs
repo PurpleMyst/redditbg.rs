@@ -5,6 +5,7 @@ use reqwest::Client;
 use sha2::{Digest, Sha256};
 use slog::{info, o, trace, warn, Logger};
 use tokio::fs;
+use tokio_stream::wrappers::ReadDirStream;
 
 use crate::utils::{PersistentSet, ReportValue};
 use crate::DIRS;
@@ -26,9 +27,8 @@ fn make_filename(path: &mut std::path::PathBuf, url: &str, image_format: ImageFo
 
 async fn download_count() -> Result<usize> {
     let path = DIRS.data_local_dir().join("images");
-    Ok(fs::read_dir(path)
-        .await?
-        .fold(0, |acc, _| future::ready(acc + 1))
+    Ok(ReadDirStream::new(fs::read_dir(path).await?)
+        .fold(0usize, |acc, _| future::ready(acc + 1))
         .await)
 }
 
@@ -113,8 +113,7 @@ where
 
     // Now let's update `downloaded` with what we've got in `images/`
     let dir = DIRS.data_local_dir().join("images");
-    tokio::fs::read_dir(dir)
-        .await?
+    ReadDirStream::new(tokio::fs::read_dir(dir).await?)
         .try_for_each(|entry| {
             if let Some(stem) = entry.path().file_stem().and_then(std::ffi::OsStr::to_str) {
                 downloaded.insert_hash(stem.to_owned());

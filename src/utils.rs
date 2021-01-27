@@ -5,7 +5,8 @@ use eyre::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
 use sha2::{Digest, Sha256};
 use slog::{debug, error, warn, Logger};
-use tokio::{fs, io, prelude::*};
+use tokio::fs;
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
 
 use crate::DIRS;
 

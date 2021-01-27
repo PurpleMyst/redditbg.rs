@@ -40,7 +40,7 @@ fn find_new_background(runtime: &mut Runtime, logger: &Logger, client: &Client) 
 
     // Make a closure that tells fetches our images
     let mut already_fetched = false;
-    let mut do_fetch = || -> Result<()> {
+    let do_fetch = || -> Result<()> {
         // Get the list of images from reddit
         let posts = reddit::Posts::new(
             logger.new(o!("state" => "getting posts")),
