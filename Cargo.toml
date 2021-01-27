@@ -22,7 +22,8 @@ slog-json = "2.3.0"
 slog-term = "2.6.0"
 systray = "0.4.0"
 tempfile = "3.1.0"
-tokio = { version = "0.2.20", features = ["macros", "time", "fs", "io-util", "blocking"] }
+tokio = { version = "1.1.0", features = ["macros", "time", "fs", "io-util", "rt", "rt-multi-thread"] }
+tokio-stream = { version = "0.1.2", features = ["fs"] }
 slog-bunyan = "2.2.0"
 file-rotator = "0.2.1"
 eyre = "0.6.0"
