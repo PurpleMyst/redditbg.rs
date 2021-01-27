@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 use eyre::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
 use sha2::{Digest, Sha256};
-use slog::{debug, error, warn, Logger};
+use slog::{debug, error, trace, warn, Logger};
 use tokio::fs;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
 
@@ -35,7 +35,7 @@ impl PersistentSet {
         // a logger value because that introduces weird borrowck things
         let path = DIRS.data_local_dir().join(format!("{}.txt", name));
 
-        debug!(logger, "loading persistent set"; "path" => %path.display());
+        trace!(logger, "loading persistent set"; "path" => %path.display());
         let file = match fs::OpenOptions::new().read(true).open(&path).await {
             Ok(file) => file,
             Err(error) => {
@@ -64,7 +64,7 @@ impl PersistentSet {
             }
             contents.insert(line);
         }
-        debug!(logger, "loaded persistent set"; "path" => %path.display());
+        trace!(logger, "loaded persistent set"; "path" => %path.display());
         Ok(Self {
             logger,
             name,
@@ -74,7 +74,7 @@ impl PersistentSet {
 
     pub async fn store(self) -> Result<()> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", self.name));
-        debug!(self.logger, "storing persistent set"; "path" => %path.display());
+        trace!(self.logger, "storing persistent set"; "path" => %path.display());
         let contents = self.contents.into_iter().collect::<Vec<_>>().join("\n");
         let mut file = fs::OpenOptions::new()
             .write(true)

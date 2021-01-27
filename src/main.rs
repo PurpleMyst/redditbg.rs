@@ -9,7 +9,7 @@ use std::{convert::Infallible, num::NonZeroUsize};
 use directories::ProjectDirs;
 use eyre::{bail, Result, WrapErr};
 use reqwest::Client;
-use slog::{debug, error, info, o, Logger};
+use slog::{debug, error, info, o, trace, Logger};
 
 lazy_static::lazy_static! {
     static ref DIRS: ProjectDirs = ProjectDirs::from(
@@ -84,17 +84,17 @@ fn find_new_background(runtime: &mut Runtime, logger: &Logger, client: &Client) 
         }
     };
 
-    debug!(logger, "resizing background");
+    trace!(logger, "resizing background");
     let (w, h) = utils::screen_size()?;
     let picked = picked.resize(w, h, image::imageops::FilterType::Lanczos3);
 
     // Save it to the filesystem so that we can set it
     let path = DIRS.cache_dir().join("background.png");
-    debug!(logger, "saving background"; "path" => %path.display());
+    trace!(logger, "saving background"; "path" => %path.display());
     picked.save(&path)?;
 
     // Set it as a background
-    debug!(logger, "setting background");
+    trace!(logger, "setting background");
     platform::set_background(&path)?;
 
     // If we didn't fetch while picking the image, do so after setting the background
