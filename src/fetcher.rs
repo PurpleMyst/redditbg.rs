@@ -1,9 +1,11 @@
+use std::path::PathBuf;
+
 use eyre::{bail, Result, WrapErr};
 use futures::prelude::*;
 use image::ImageFormat;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use slog::{info, o, trace, warn, Logger};
+use slog::{o, trace, warn, Logger};
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
@@ -14,7 +16,8 @@ use crate::DIRS;
 const MAX_CACHED: usize = 25;
 
 /// Append a generated filename for an url to the given path buffer
-fn make_filename(path: &mut std::path::PathBuf, url: &str, image_format: ImageFormat) {
+fn make_filename(url: &str, image_format: ImageFormat) -> PathBuf {
+    let mut path = DIRS.data_local_dir().join("images");
     let mut hasher = Sha256::new();
     hasher.update(url);
     let hash = hasher.finalize();
@@ -23,6 +26,7 @@ fn make_filename(path: &mut std::path::PathBuf, url: &str, image_format: ImageFo
         hash,
         image_format.extensions_str().get(0).unwrap_or(&"dat")
     ));
+    path
 }
 
 async fn download_count() -> Result<usize> {
@@ -41,24 +45,23 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
         .send()
         .and_then(|response| response.bytes()))
     .wrap_err_with(|| format!("Failed to fetch {:?}", url))?;
-    trace!(logger, "got body"; "size" => body.len());
+    trace!(logger, "got body"; "size" => body.len(), "url" => &url);
 
     // Verify that it looks like an image
     let image_format = match image::guess_format(&body) {
         Ok(image_format) => {
-            info!(logger, "got image"; "format" => ?image_format);
+            trace!(logger, "got image"; "format" => ?image_format, "url" => &url);
             image_format
         }
 
         Err(err) => {
-            trace!(logger, "not image");
+            trace!(logger, "not image"; "url" => &url);
             bail!(err);
         }
     };
 
     // Let's calculate the path we want
-    let mut path = DIRS.data_local_dir().join("images");
-    make_filename(&mut path, &url, image_format);
+    let path = make_filename(&url, image_format);
 
     // Now we'll write it to a temporary file that will then be *atomically* persisted once it's all written
     // The use of `spawn_blocking` means that once we start writing an image we *will* write an image
