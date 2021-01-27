@@ -16,8 +16,8 @@ const MAX_CACHED: usize = 25;
 /// Append a generated filename for an url to the given path buffer
 fn make_filename(path: &mut std::path::PathBuf, url: &str, image_format: ImageFormat) {
     let mut hasher = Sha256::new();
-    hasher.input(url);
-    let hash = hasher.result();
+    hasher.update(url);
+    let hash = hasher.finalize();
     path.push(format!(
         "{:x}.{}",
         hash,

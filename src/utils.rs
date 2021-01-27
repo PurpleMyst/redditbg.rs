@@ -17,8 +17,8 @@ impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
 
     fn handle(&mut self, _attempt: usize, err: E) -> RetryPolicy<Self::OutError> {
         match self.0.next() {
-            Some(Some(duration)) => RetryPolicy::WaitRetry(duration),
-            Some(None) | None => RetryPolicy::ForwardError(err),
+            Some(duration) => RetryPolicy::WaitRetry(duration),
+            None => RetryPolicy::ForwardError(err),
         }
     }
 }
@@ -89,8 +89,8 @@ impl PersistentSet {
 
     fn hash(url: &str) -> String {
         let mut hasher = Sha256::new();
-        hasher.input(url);
-        let hash = hasher.result();
+        hasher.update(url);
+        let hash = hasher.finalize();
         format!("{:x}", hash)
     }
 
@@ -107,16 +107,15 @@ impl PersistentSet {
 #[macro_export]
 macro_rules! with_backoff {
     ($expr:expr) => {{
-        let backoff = ::exponential_backoff::Backoff::new(10)
-            .timeout_range(
-                ::std::time::Duration::from_secs(1),
-                ::std::time::Duration::from_secs(15),
-            )
-            .jitter(0.3)
-            .factor(2);
+        use ::exponential_backoff::Backoff;
+        use ::futures_retry::FutureRetry;
+        use ::std::time::Duration;
 
-        let retry_future =
-            ::futures_retry::FutureRetry::new($expr, $crate::utils::BackoffPolicy(backoff.iter()));
+        let mut backoff = Backoff::new(10, Duration::from_secs(1), Duration::from_secs(15));
+        backoff.set_jitter(0.3);
+        backoff.set_factor(2);
+
+        let retry_future = FutureRetry::new($expr, $crate::utils::BackoffPolicy(backoff.iter()));
         match retry_future.await {
             Ok((value, _)) => Ok(value),
             Err((err, _)) => Err(err),

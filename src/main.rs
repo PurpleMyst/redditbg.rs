@@ -1,10 +1,10 @@
 #![recursion_limit = "512"]
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::convert::Infallible;
 use std::fs;
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
 use std::time::Duration;
+use std::{convert::Infallible, num::NonZeroUsize};
 
 use directories::ProjectDirs;
 use eyre::{bail, Result, WrapErr};
@@ -41,23 +41,22 @@ fn find_new_background(runtime: &mut Runtime, logger: &Logger, client: &Client) 
     // Make a closure that tells fetches our images
     let mut already_fetched = false;
     let do_fetch = || -> Result<()> {
-        // Get the list of images from reddit
-        let posts = reddit::Posts::new(
-            logger.new(o!("state" => "getting posts")),
-            client,
-            &subreddits,
-        );
-        info!(logger, "got posts");
+        runtime.block_on(async {
+            // Get the list of images from reddit
+            let posts = reddit::Posts::new(
+                logger.new(o!("state" => "getting posts")),
+                client,
+                &subreddits,
+            );
+            info!(logger, "got posts");
 
-        // Fetch them
-        let fetched = runtime.block_on(fetcher::fetch(
-            logger.new(o!("state" => "fetching")),
-            client,
-            posts,
-        ))?;
-        info!(logger, "fetched"; "count" => fetched);
+            // Fetch them
+            let fetched =
+                fetcher::fetch(logger.new(o!("state" => "fetching")), client, posts).await?;
+            info!(logger, "fetched"; "count" => fetched);
 
-        Ok(())
+            Ok(())
+        })
     };
 
     let picked = {
@@ -122,7 +121,7 @@ fn setup_logging() -> slog::Logger {
         env!("CARGO_PKG_NAME"),
         DIRS.data_local_dir().join("logs"),
         file_rotator::RotationPeriod::Interval(std::time::Duration::from_secs(60 * 60 * 24)),
-        7,
+        NonZeroUsize::new(7).unwrap(),
     );
 
     let drain1 = slog_bunyan::with_name(env!("CARGO_PKG_NAME"), file)
