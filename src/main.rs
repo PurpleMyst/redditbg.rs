@@ -1,15 +1,15 @@
 #![recursion_limit = "512"]
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::{convert::Infallible, time::Duration};
+use std::convert::Infallible;
+use std::fs;
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
+use std::time::Duration;
 
 use directories::ProjectDirs;
 use eyre::{bail, Result, WrapErr};
-use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-use futures::prelude::*;
 use reqwest::Client;
 use slog::{debug, error, info, o, Logger};
-use tokio::{fs, time::delay_for};
 
 lazy_static::lazy_static! {
     static ref DIRS: ProjectDirs = ProjectDirs::from(
@@ -21,6 +21,7 @@ lazy_static::lazy_static! {
 
 #[macro_use]
 mod utils;
+use tokio::runtime::Runtime;
 use utils::ReportValue;
 
 mod reddit;
@@ -31,16 +32,15 @@ mod picker;
 
 mod platform;
 
-async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
+fn find_new_background(runtime: &mut Runtime, logger: &Logger, client: &Client) -> Result<()> {
     let subreddits_txt = fs::read_to_string(DIRS.config_dir().join("subreddits.txt"))
-        .await
         .wrap_err("Could not read subreddits.txt")?;
 
     let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
 
     // Make a closure that tells fetches our images
     let mut already_fetched = false;
-    let do_fetch = || async {
+    let mut do_fetch = || -> Result<()> {
         // Get the list of images from reddit
         let posts = reddit::Posts::new(
             logger.new(o!("state" => "getting posts")),
@@ -50,10 +50,14 @@ async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
         info!(logger, "got posts");
 
         // Fetch them
-        let fetched = fetcher::fetch(logger.new(o!("state" => "fetching")), client, posts).await?;
+        let fetched = runtime.block_on(fetcher::fetch(
+            logger.new(o!("state" => "fetching")),
+            client,
+            posts,
+        ))?;
         info!(logger, "fetched"; "count" => fetched);
 
-        Result::<(), eyre::Report>::Ok(())
+        Ok(())
     };
 
     let picked = {
@@ -62,7 +66,7 @@ async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
         // Try to pick an image from the ones we've already fetched, so that we
         // don't make our user wait too long in the case that they don't have
         // internet access at the present moment
-        match picker::pick(logger.clone()).await {
+        match picker::pick(logger.clone()) {
             // If that succeeds, just return it
             Ok(img) => img,
 
@@ -70,9 +74,9 @@ async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
                 if let Some(picker::NoValidImage) = err.downcast_ref() {
                     debug!(logger, "found no valid image on first try");
                     // Otherwise, if we found no valid image, try to fetch them and pick again
-                    do_fetch().await?;
+                    do_fetch()?;
                     already_fetched = true;
-                    picker::pick(logger).await?
+                    picker::pick(logger)?
                 } else {
                     // If we got any other error, bail and return it to the caller
                     bail!(err);
@@ -96,7 +100,7 @@ async fn find_new_background(logger: &Logger, client: &Client) -> Result<()> {
 
     // If we didn't fetch while picking the image, do so after setting the background
     if !already_fetched {
-        do_fetch().await?;
+        do_fetch()?;
     }
 
     Ok(())
@@ -169,10 +173,10 @@ enum Message {
 const ICON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/icon.ico");
 
 // TODO: fork systray so we can make it actually work with async
-fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver<Message>)> {
+fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
     let mut app = systray::Application::new()?;
 
-    let (tx, rx) = unbounded();
+    let (tx, rx) = sync_channel(10);
 
     app.set_tooltip("Reddit Background Setter")?;
 
@@ -182,7 +186,7 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
         app.add_menu_item("Change now", move |_app| -> Result<(), Infallible> {
             info!(logger, "sending message"; "message" => "change now");
 
-            if let Err(error) = tx.unbounded_send(Message::ChangeNow) {
+            if let Err(error) = tx.send(Message::ChangeNow) {
                 error!(logger, "could not send message"; "error" => ReportValue(error.into()));
             }
 
@@ -198,7 +202,7 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
             move |_app| -> Result<(), Infallible> {
                 info!(logger, "sending message"; "message" => "copy image");
 
-                if let Err(error) = tx.unbounded_send(Message::CopyImage) {
+                if let Err(error) = tx.send(Message::CopyImage) {
                     error!(logger, "could not send message"; "error" => ReportValue(error.into()));
                 }
 
@@ -218,7 +222,7 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
             }
             app.quit();
 
-            if let Err(error) = tx.unbounded_send(Message::Quit) {
+            if let Err(error) = tx.send(Message::Quit) {
                 error!(logger, "could not send message"; "error" => ReportValue(error.into()));
             }
 
@@ -236,17 +240,18 @@ fn setup_systray(logger: Logger) -> Result<(utils::JoinOnDrop, UnboundedReceiver
     Ok((utils::JoinOnDrop::new(logger.clone(), handle), rx))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     setup_dirs()?;
     let logger = setup_logging();
-    let (_guard, mut messages) = setup_systray(logger.new(o!("state" => "systray")))?;
+    let (_guard, messages) = setup_systray(logger.new(o!("state" => "systray")))?;
     let client = setup_client()?;
+
+    let mut runtime = Runtime::new()?;
 
     'mainloop: loop {
         info!(logger, "finding new background");
 
-        match find_new_background(&logger, &client).await {
+        match find_new_background(&mut runtime, &logger, &client) {
             Ok(()) => info!(logger, "set background successfully"),
             Err(error) => {
                 error!(logger, "error while finding new background"; "error" => ReportValue(error))
@@ -254,39 +259,39 @@ async fn main() -> Result<()> {
         }
 
         loop {
-            futures::select! {
-                // If we get a message while waiting, let's act on it
-                msg = messages.next() => match msg {
-                    Some(Message::Quit) => {
-                        info!(logger, "got quit message");
-                        break 'mainloop;
-                    },
+            match messages.recv_timeout(Duration::from_secs(60 * 60)) {
+                Ok(Message::Quit) => {
+                    info!(logger, "got quit message");
+                    break 'mainloop;
+                }
 
-                    Some(Message::ChangeNow) => {
-                        info!(logger, "got change now message");
-                        continue 'mainloop;
-                    }
+                Ok(Message::ChangeNow) => {
+                    info!(logger, "got change now message");
+                    continue 'mainloop;
+                }
 
-                    Some(Message::CopyImage) => {
-                        match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
-                            .map_err(eyre::Error::from)
-                            .and_then(|reader| platform::copy_image(reader.with_guessed_format()?.decode()?))
-                        {
-                            Ok(()) => info!(logger, #"notification", "copied image"),
+                Ok(Message::CopyImage) => {
+                    match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
+                        .map_err(eyre::Error::from)
+                        .and_then(|reader| {
+                            platform::copy_image(reader.with_guessed_format()?.decode()?)
+                        }) {
+                        Ok(()) => info!(logger, #"notification", "copied image"),
 
-                            Err(error) => {
-                                error!(logger, "copy image error"; "error" => ReportValue(error));
-                            }
+                        Err(error) => {
+                            error!(logger, "copy image error"; "error" => ReportValue(error));
                         }
                     }
+                }
 
-                    None => {
-                        error!(logger, "sys tray hung up");
-                        break 'mainloop;
-                    },
-                },
+                Err(RecvTimeoutError::Disconnected) => {
+                    error!(logger, "sys tray hung up");
+                    break 'mainloop;
+                }
 
-                _ = delay_for(Duration::from_secs(60 * 60)).fuse() => { continue 'mainloop; },
+                Err(RecvTimeoutError::Timeout) => {
+                    continue 'mainloop;
+                }
             }
         }
     }

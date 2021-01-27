@@ -18,8 +18,7 @@ impl std::fmt::Display for NoValidImage {
 
 impl std::error::Error for NoValidImage {}
 
-// FIXME: use tokio::fs
-pub async fn pick(logger: Logger) -> Result<DynamicImage> {
+pub fn pick(logger: Logger) -> Result<DynamicImage> {
     // Get all downloaded images
     let (path, image) = fs::read_dir(DIRS.data_local_dir().join("images"))?
         .find_map(|entry| {
