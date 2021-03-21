@@ -1,4 +1,4 @@
-use std::{io, path::Path, path::PathBuf};
+use std::{convert::TryFrom, io, path::Path, path::PathBuf};
 
 use eyre::{ensure, eyre, Result, WrapErr};
 use slog::KV;
@@ -11,6 +11,25 @@ macro_rules! wintry {
             Err(io::Error::last_os_error())
         }
     };
+}
+
+#[cfg(windows)]
+pub fn screen_size() -> Result<(u32, u32)> {
+    use winapi::um::winuser::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN};
+
+    let (width, height) = unsafe {
+        (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+
+    // try_winapi! is useless here as GetSystemMetrics does not use GetLastError
+    eyre::ensure!(width != 0, "GetSystemMetrics's returned width was zero");
+    eyre::ensure!(height != 0, "GetSystemMetrics's returned height was zero");
+    dbg!(width, height);
+
+    Ok((u32::try_from(width)?, u32::try_from(height)?))
 }
 
 #[cfg(windows)]

@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::convert::TryFrom;
 
 use eyre::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
@@ -51,7 +50,6 @@ impl PersistentSet {
         let mut reader = io::BufReader::new(file);
         let mut contents = HashSet::new();
 
-        // TODO: refactor this to use BufRead::lines
         loop {
             let mut line = String::new();
             let read = reader.read_line(&mut line).await?;
@@ -121,24 +119,6 @@ macro_rules! with_backoff {
             Err((err, _)) => Err(err),
         }
     }};
-}
-
-#[cfg(windows)]
-pub fn screen_size() -> Result<(u32, u32)> {
-    use winapi::um::winuser::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN};
-
-    let (width, height) = unsafe {
-        (
-            GetSystemMetrics(SM_CXVIRTUALSCREEN),
-            GetSystemMetrics(SM_CYVIRTUALSCREEN),
-        )
-    };
-
-    // try_winapi! is useless here as GetSystemMetrics does not use GetLastError
-    eyre::ensure!(width != 0, "GetSystemMetrics's returned width was zero");
-    eyre::ensure!(height != 0, "GetSystemMetrics's returned height was zero");
-
-    Ok((u32::try_from(width)?, u32::try_from(height)?))
 }
 
 pub struct JoinOnDrop {
