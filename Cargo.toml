@@ -3,6 +3,7 @@ name = "redditbg"
 version = "4.1.0"
 authors = ["PurpleMyst <PurpleMyst@users.noreply.github.com>"]
 edition = "2018"
+include = ["src/**/*", "readme.md"]
 
 [dependencies]
 bytes = "1.0.1"

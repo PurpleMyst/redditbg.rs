@@ -85,7 +85,7 @@ fn find_new_background(runtime: &mut Runtime, logger: &Logger, client: &Client) 
     };
 
     trace!(logger, "resizing background");
-    let (w, h) = utils::screen_size()?;
+    let (w, h) = platform::screen_size()?;
     let picked = picked.resize(w, h, image::imageops::FilterType::Lanczos3);
 
     // Save it to the filesystem so that we can set it
