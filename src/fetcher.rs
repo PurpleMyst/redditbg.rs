@@ -1,14 +1,15 @@
 use std::path::PathBuf;
 
-use eyre::{bail, Result, WrapErr};
+use eyre::{bail, ensure, Result, WrapErr};
 use futures::prelude::*;
-use image::ImageFormat;
+use image::{GenericImageView, ImageFormat};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use slog::{o, trace, warn, Logger};
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
+use crate::platform;
 use crate::utils::{PersistentSet, ReportValue};
 use crate::DIRS;
 
@@ -59,6 +60,19 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
             bail!(err);
         }
     };
+
+    // Check the aspect ratio of our image
+    let img = image::load_from_memory_with_format(&body, image_format)?;
+    let (iw, ih) = (img.width(), img.height());
+    let (sw, sh) = platform::screen_size()?;
+    ensure!(
+        (iw as f64 / ih as f64 - sw as f64 / sh as f64).abs() <= 0.01,
+        "Aspect ratio not within two decimal places ({}:{} instead of {}:{})",
+        iw,
+        ih,
+        sw,
+        sh
+    );
 
     // Let's calculate the path we want
     let path = make_filename(&url, image_format);
