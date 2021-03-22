@@ -37,6 +37,7 @@ fn find_new_background(runtime: &mut Runtime, logger: &Logger, client: &Client) 
         .wrap_err("Could not read subreddits.txt")?;
 
     let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
+    info!(logger, "using subreddits"; "subreddits" => ?subreddits);
 
     // Make a closure that tells fetches our images
     let mut already_fetched = false;
