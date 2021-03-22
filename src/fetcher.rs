@@ -5,7 +5,7 @@ use futures::prelude::*;
 use image::{GenericImageView, ImageFormat};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use slog::{o, trace, warn, Logger};
+use slog::{debug, o, trace, warn, Logger};
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
@@ -46,17 +46,17 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
         .send()
         .and_then(|response| response.bytes()))
     .wrap_err_with(|| format!("Failed to fetch {:?}", url))?;
-    trace!(logger, "got body"; "size" => body.len(), "url" => &url);
+    trace!(logger, "got body"; "size" => body.len());
 
     // Verify that it looks like an image
     let image_format = match image::guess_format(&body) {
         Ok(image_format) => {
-            trace!(logger, "got image"; "format" => ?image_format, "url" => &url);
+            trace!(logger, "got image"; "format" => ?image_format);
             image_format
         }
 
         Err(err) => {
-            trace!(logger, "not image"; "url" => &url);
+            trace!(logger, "not image");
             bail!(err);
         }
     };
@@ -84,18 +84,23 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     //  When you shut down the executor, it will wait indefinitely for all blocking operations to finish."
     // XXX: ^ We may be able to fix this if we use spawn_blocking just to
     //      return a `(File, Path)` back to async-land
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        use std::io::prelude::*;
-        let mut file = tempfile::NamedTempFile::new()?;
-        trace!(logger, "created temporary file"; "path" => ?file.path());
-        file.write_all(&body).wrap_err("writing body")?;
-        trace!(logger, "flushing temporary file");
-        file.flush().wrap_err("flushing")?;
-        trace!(logger, "persisting temporary file"; "path" => %path.display());
-        file.persist(path).wrap_err("persisting")?;
-        Ok(())
+    tokio::task::spawn_blocking({
+        let logger = logger.clone();
+        move || -> Result<()> {
+            use std::io::prelude::*;
+            let mut file = tempfile::NamedTempFile::new()?;
+            trace!(logger, "created temporary file"; "path" => ?file.path());
+            file.write_all(&body).wrap_err("writing body")?;
+            trace!(logger, "flushing temporary file");
+            file.flush().wrap_err("flushing")?;
+            trace!(logger, "persisting temporary file"; "path" => %path.display());
+            file.persist(path).wrap_err("persisting")?;
+            Ok(())
+        }
     })
     .await??;
+
+    debug!(logger, "fetched");
 
     Ok(())
 }
@@ -107,22 +112,34 @@ where
     let mut downloaded = PersistentSet::load(logger.clone(), "downloaded").await?;
     let cached_count = download_count().await?;
 
+    let mut invalid = PersistentSet::load(logger.clone(), "invalid").await?;
+    let mut new_invalid = Vec::new();
+
     // Fetch the needed images
     let fetched = urls
         // Skip over images we've already set
-        .filter(|url| future::ready(!downloaded.contains(url)))
+        .filter(|url| future::ready(!downloaded.contains(url) && !invalid.contains(url)))
         // Start downloading them, not necessarily in order
         .map(|url| {
             let logger = logger.new(o!("url" => url.clone()));
-            fetch_one(logger.clone(), client, url).map_err(
-                move |error| warn!(logger, "failed fetching"; "error" => ReportValue(error)),
-            )
+            fetch_one(logger.clone(), client, url.clone()).map_err(move |error| {
+                warn!(logger, "failed fetching"; "error" => ReportValue(error));
+                url
+            })
         })
         // Instead of polling in order, take a block of 25 and poll them all at once
         .buffer_unordered(25)
         // As they come in, filter out the ones that failed
-        .filter_map(|result| future::ready(result.ok()))
         // Consider only the ones that succeeded for the max download calculation
+        .filter_map(|r| {
+            future::ready(match r {
+                Ok(()) => Some(()),
+                Err(url) => {
+                    new_invalid.push(url);
+                    None
+                }
+            })
+        })
         .take(MAX_CACHED.saturating_sub(cached_count))
         // Count them out and return it
         .fold(0, |acc, ()| future::ready(acc + 1))
@@ -139,7 +156,13 @@ where
             future::ready(Ok(()))
         })
         .await?;
+
     downloaded.store().await?;
+
+    new_invalid.into_iter().for_each(|url| {
+        invalid.insert(url);
+    });
+    invalid.store().await?;
 
     Ok(fetched)
 }

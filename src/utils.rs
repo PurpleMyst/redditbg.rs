@@ -92,6 +92,10 @@ impl PersistentSet {
         format!("{:x}", hash)
     }
 
+    pub fn insert(&mut self, value: String) -> bool {
+        self.insert_hash(Self::hash(&value))
+    }
+
     pub fn insert_hash(&mut self, hash: String) -> bool {
         self.contents.insert(hash)
     }
