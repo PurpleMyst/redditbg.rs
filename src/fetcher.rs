@@ -100,7 +100,7 @@ async fn fetch_one(logger: Logger, client: &Client, url: String) -> Result<()> {
     })
     .await??;
 
-    debug!(logger, "fetched");
+    debug!(logger, "fetched successfully");
 
     Ok(())
 }
