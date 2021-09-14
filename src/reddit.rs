@@ -5,7 +5,7 @@ use eyre::{eyre, Result};
 use futures::prelude::*;
 use reqwest::Client;
 use serde_json::Value;
-use slog::{warn, Logger};
+use slog::{trace, warn, Logger};
 
 use crate::utils::ReportValue;
 use crate::with_backoff;
@@ -53,9 +53,10 @@ impl<'a> Posts<'a> {
         if let Some(after) = self.next_page_id.as_ref() {
             req_builder = req_builder.query(&[("after", after)]);
         }
+        trace!(self.logger, "posts request"; "url" => url, "next_page_id" => &self.next_page_id);
 
         // *puts on sunglasses* Now it's time to enter the matrix
-        async {
+        async move {
             // Here we make our retryable future that just sends out the
             // response and parses it as JSON. It's important that we parse the
             // response into JSON inside the retryable future because RequestBuilder::send()
