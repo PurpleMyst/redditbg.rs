@@ -2,9 +2,8 @@ use std::fs;
 
 use eyre::Result;
 use image::DynamicImage;
-use slog::{debug, info, o, trace, warn, Logger};
+use tracing::{debug, info, trace, warn};
 
-use crate::utils::ReportValue;
 use crate::DIRS;
 
 #[derive(Debug)]
@@ -18,15 +17,14 @@ impl std::fmt::Display for NoValidImage {
 
 impl std::error::Error for NoValidImage {}
 
-pub fn pick(logger: Logger) -> Result<DynamicImage> {
+#[tracing::instrument]
+pub fn pick() -> Result<DynamicImage> {
     // Get all downloaded images
     let (path, image) = fs::read_dir(DIRS.data_local_dir().join("images"))?
         .find_map(|entry| {
             // Validate if this entry is actually an image and if so return it and its loaded image
             let entry = entry.ok()?;
             let path = entry.path();
-
-            let logger = logger.new(o!("path" => path.display().to_string()));
 
             let maybe_image = image::io::Reader::open(&path)
                 .map_err(eyre::Error::from)
@@ -36,20 +34,21 @@ pub fn pick(logger: Logger) -> Result<DynamicImage> {
                 Ok(image) => Some((path, image)),
 
                 Err(error) => {
-                    debug!(logger, "could not parse image"; "error" => ReportValue(error));
-                    trace!(logger, "removing image");
+                    debug!(%error, "could not parse image");
+                    trace!("removing image");
                     if let Err(error) = std::fs::remove_file(&path) {
-                        warn!(logger, "error while removing"; "error" => ReportValue(error.into()));
+                        let error = eyre::Report::from(error);
+                        warn!(%error, "error while removing");
                     }
                     None
                 }
             }
         })
         .ok_or(NoValidImage)?;
-    info!(logger, "picked next background"; "path" => %path.display());
+    info!(path = %path.display(), "picked next background");
 
     // Remove the original file
-    trace!(logger, "removing original file"; "path" => %path.display());
+    trace!(path = %path.display(), "removing original file");
     fs::remove_file(path)?;
 
     Ok(image)

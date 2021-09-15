@@ -5,13 +5,11 @@ use eyre::{eyre, Result};
 use futures::prelude::*;
 use reqwest::Client;
 use serde_json::Value;
-use slog::{trace, warn, Logger};
+use tracing::{trace, warn};
 
-use crate::utils::ReportValue;
 use crate::with_backoff;
 
 pub struct Posts<'a> {
-    logger: Logger,
     client: &'a Client,
     subreddits: &'a [&'a str],
     next_page_id: Option<String>,
@@ -31,9 +29,8 @@ enum PostsState {
 }
 
 impl<'a> Posts<'a> {
-    pub fn new(logger: Logger, client: &'a Client, subreddits: &'a [&'a str]) -> Self {
+    pub fn new(client: &'a Client, subreddits: &'a [&'a str]) -> Self {
         Self {
-            logger,
             client,
             subreddits,
             next_page_id: None,
@@ -41,6 +38,7 @@ impl<'a> Posts<'a> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     fn get_next_page(&mut self) -> impl Future<Output = Result<Page>> {
         // Spin up the request builder at the correct URL
         let url = format!(
@@ -53,7 +51,11 @@ impl<'a> Posts<'a> {
         if let Some(after) = self.next_page_id.as_ref() {
             req_builder = req_builder.query(&[("after", after)]);
         }
-        trace!(self.logger, "posts request"; "url" => url, "next_page_id" => &self.next_page_id);
+        trace!(
+            url = url.as_str(),
+            next_page_id = ?self.next_page_id,
+            "posts request"
+        );
 
         // *puts on sunglasses* Now it's time to enter the matrix
         async move {
@@ -137,7 +139,7 @@ impl<'a> Stream for Posts<'a> {
                         Err(error) => {
                             // We've already got backoff baked into `get_next_page`, we probably can't recover here
                             // It's best if we just stop giving out posts
-                            warn!(self.logger, "error while fetching posts"; "error" => ReportValue(error));
+                            warn!(%error, "error while fetching posts");
                             self.state = PostsState::Exhausted;
                         }
                     }
@@ -152,7 +154,7 @@ impl<'a> Stream for Posts<'a> {
                     } else {
                         // If the previous page had no "after", it's probably best to mark ourselves as exhausted
                         // So that we can avoid entering a sort of "cycle"
-                        warn!(self.logger, "missing next_page_id");
+                        warn!("missing next_page_id");
                         self.state = PostsState::Exhausted;
                     }
                 }

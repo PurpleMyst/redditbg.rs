@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 
+use std::sync::{Arc, Mutex};
+
 use eyre::Result;
 use futures_retry::{ErrorHandler, RetryPolicy};
 use sha2::{Digest, Sha256};
-use slog::{debug, error, trace, warn, Logger};
 use tokio::fs;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
+use tracing::{debug, error, trace, warn};
 
 use crate::DIRS;
 
@@ -23,24 +25,23 @@ impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
 }
 
 pub struct PersistentSet {
-    logger: Logger,
     name: &'static str,
     contents: HashSet<String>,
 }
 
 impl PersistentSet {
-    pub async fn load(logger: Logger, name: &'static str) -> Result<Self> {
+    pub async fn load(name: &'static str) -> Result<Self> {
         // We use this in all subsequent logging calls rather than setting it as
         // a logger value because that introduces weird borrowck things
         let path = DIRS.data_local_dir().join(format!("{}.txt", name));
 
-        trace!(logger, "loading persistent set"; "path" => %path.display());
+        trace!(path = %path.display(), "loading persistent set");
         let file = match fs::OpenOptions::new().read(true).open(&path).await {
             Ok(file) => file,
             Err(error) => {
-                warn!(logger, "failed to open persistent set"; "name" => name, "error" => ReportValue(error.into()), "path" => %path.display());
+                let error = eyre::Report::from(error);
+                warn!(name, %error, path = %path.display(), "failed to open persistent set");
                 return Ok(Self {
-                    logger,
                     name,
                     contents: HashSet::new(),
                 });
@@ -62,17 +63,13 @@ impl PersistentSet {
             }
             contents.insert(line);
         }
-        trace!(logger, "loaded persistent set"; "path" => %path.display());
-        Ok(Self {
-            logger,
-            name,
-            contents,
-        })
+        trace!(path = %path.display(), "loaded persistent set");
+        Ok(Self { name, contents })
     }
 
     pub async fn store(self) -> Result<()> {
         let path = DIRS.data_local_dir().join(format!("{}.txt", self.name));
-        trace!(self.logger, "storing persistent set"; "path" => %path.display());
+        trace!(path = %path.display(), "storing persistent set");
         let contents = self.contents.into_iter().collect::<Vec<_>>().join("\n");
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -126,14 +123,12 @@ macro_rules! with_backoff {
 }
 
 pub struct JoinOnDrop {
-    logger: Logger,
     handle: Option<std::thread::JoinHandle<Result<()>>>,
 }
 
 impl JoinOnDrop {
-    pub fn new(logger: Logger, handle: std::thread::JoinHandle<Result<()>>) -> Self {
+    pub fn new(handle: std::thread::JoinHandle<Result<()>>) -> Self {
         Self {
-            logger,
             handle: Some(handle),
         }
     }
@@ -142,10 +137,10 @@ impl JoinOnDrop {
 impl Drop for JoinOnDrop {
     fn drop(&mut self) {
         match self.handle.take().unwrap().join() {
-            Ok(Ok(())) => debug!(self.logger, "child thread joined"),
+            Ok(Ok(())) => debug!("child thread joined"),
 
             Ok(Err(error)) => {
-                error!(self.logger, "child thread returned error"; "error" => ReportValue(error))
+                error!(%error, "child thread returned error")
             }
 
             Err(error) => {
@@ -158,21 +153,33 @@ impl Drop for JoinOnDrop {
                         &"not of known type"
                     };
 
-                error!(self.logger, "child thread panic"; "error" => %error)
+                error!(%error, "child thread panic")
             }
         }
     }
 }
 
-pub struct ReportValue(pub eyre::Report);
+#[derive(Debug)]
+pub(crate) struct MutexWriter<T>(Arc<Mutex<T>>);
 
-impl slog::Value for ReportValue {
-    fn serialize(
-        &self,
-        record: &slog::Record,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        format_args!("{:#}", self.0).serialize(record, key, serializer)
+impl<T> MutexWriter<T> {
+    pub(crate) fn new(x: T) -> Self {
+        Self(Arc::new(Mutex::new(x)))
+    }
+}
+
+impl<T> Clone for MutexWriter<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for MutexWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.lock().unwrap().flush()
     }
 }

@@ -1,7 +1,6 @@
 use std::{convert::TryFrom, io, path::Path, path::PathBuf};
 
-use eyre::{ensure, eyre, Result, WrapErr};
-use slog::KV;
+use eyre::{ensure, Result, WrapErr};
 
 macro_rules! wintry {
     ($expr:expr) => {
@@ -90,51 +89,55 @@ pub fn copy_image(img: image::DynamicImage) -> Result<()> {
     set_result.and(delete_result).and(close_result)
 }
 
-pub struct NotifyDrain {
+pub struct Notifier {
     pub title: String,
     pub icon: PathBuf,
 }
 
 #[derive(Default)]
-struct Text2Serializer {
-    result: String,
+struct NotifierVisit {
+    message: Option<String>,
+    fields: String,
 }
 
-impl slog::Serializer for Text2Serializer {
-    fn emit_arguments(&mut self, key: slog::Key, val: &std::fmt::Arguments) -> slog::Result {
-        if !self.result.is_empty() {
-            self.result += " | ";
+impl tracing::field::Visit for NotifierVisit {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+
+        if field.name() == "message" {
+            self.message = Some(format!("{:?}", value));
+            return;
         }
 
-        self.result += &format!("{}: {}", key, val);
-
-        Ok(())
+        if !self.fields.is_empty() {
+            let _ = write!(self.fields, " | ");
+        }
+        let _ = write!(self.fields, "{}: {:?}", field.name(), value);
     }
 }
 
-impl slog::Drain for NotifyDrain {
-    type Ok = ();
-
-    type Err = eyre::Report;
-
-    #[cfg(windows)]
-    fn log(&self, record: &slog::Record, kv: &slog::OwnedKVList) -> Result<Self::Ok, Self::Err> {
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Notifier {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
         use winrt_notification::{Duration, IconCrop, Toast};
 
-        let mut text2_ser = Text2Serializer::default();
-        let _ = record.kv().serialize(record, &mut text2_ser);
-        let _ = kv.serialize(record, &mut text2_ser);
+        let mut visitor = NotifierVisit::default();
+        event.record(&mut visitor);
 
-        Toast::new(Toast::POWERSHELL_APP_ID)
+        let meta = event.metadata();
+
+        let _ = Toast::new(Toast::POWERSHELL_APP_ID)
             .title(&format!(
-                "{} ({}:{}:{})",
+                "{} ({}:{})",
                 self.title,
-                record.file(),
-                record.line(),
-                record.column()
+                meta.file().unwrap_or("<unknown>"),
+                meta.line().unwrap_or(0xCAFEBABE),
             ))
-            .text1(&format!("{}", record.msg()))
-            .text2(&text2_ser.result)
+            .text1(visitor.message.as_deref().unwrap_or("no message"))
+            .text2(&visitor.fields)
             .duration(Duration::Short)
             .icon(
                 &self.icon,
@@ -146,10 +149,10 @@ impl slog::Drain for NotifyDrain {
             )
             .show()
             .map_err(|err| {
-                eyre!(
+                eyre::format_err!(
                     "Failed to show notification (HRESULT {:?})",
                     err.as_hresult()
                 )
-            })
+            });
     }
 }
