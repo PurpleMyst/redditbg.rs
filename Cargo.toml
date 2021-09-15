@@ -24,7 +24,7 @@ tokio-stream = { version = "0.1.2", features = ["fs"] }
 slog-bunyan = "2.3.0"
 file-rotator = "0.4.1"
 eyre = "0.6.5"
-tracing = "0.1.26"
+tracing = { version = "0.1.26", features = ["max_level_trace", "release_max_level_debug"] }
 tracing-bunyan-formatter = "0.2.5"
 tracing-subscriber = "0.2.22"
 
