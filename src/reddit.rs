@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde_json::Value;
 use tracing::{trace, warn};
 
-use crate::with_backoff;
+use crate::utils::with_backoff;
 
 pub struct Posts<'a> {
     client: &'a Client,
@@ -63,14 +63,15 @@ impl<'a> Posts<'a> {
             // response and parses it as JSON. It's important that we parse the
             // response into JSON inside the retryable future because RequestBuilder::send()
             // does not actually consume the response
-            let mut listing: Value = with_backoff!(move || {
+            let mut listing: Value = with_backoff(move || {
                 req_builder
                     .try_clone()
                     .unwrap()
                     .send()
                     .and_then(|resp| resp.json())
                     .map_err(eyre::Error::from)
-            })?;
+            })
+            .await?;
 
             let data = listing
                 .get_mut("data")

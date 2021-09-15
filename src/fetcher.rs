@@ -10,7 +10,7 @@ use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, trace, warn};
 
 use crate::platform;
-use crate::utils::PersistentSet;
+use crate::utils::{with_backoff, PersistentSet};
 use crate::DIRS;
 
 // This value is kinda arbitrary but there are 25 potential images in one reddit page
@@ -42,11 +42,14 @@ async fn download_count() -> Result<usize> {
 async fn fetch_one(client: &Client, url: String) -> Result<(), (String, eyre::Report)> {
     let result = (|| async {
         // Fetch the image's body
-        let body: bytes::Bytes = with_backoff!(|| client
-            .get(&url)
-            .header("Accept", "image/*")
-            .send()
-            .and_then(|response| response.bytes()))
+        let body: bytes::Bytes = with_backoff(|| {
+            client
+                .get(&url)
+                .header("Accept", "image/*")
+                .send()
+                .and_then(|response| response.bytes())
+        })
+        .await
         .wrap_err_with(|| format!("Failed to fetch {:?}", url))?;
         trace!(size = body.len(), "got body");
 
