@@ -19,12 +19,6 @@ lazy_static::lazy_static! {
     ).expect("could not get project dirs");
 }
 
-#[cfg(debug_assertions)]
-const REDDITBG_LOG_LEVEL: tracing::Level = tracing::Level::TRACE;
-
-#[cfg(not(debug_assertions))]
-const REDDITBG_LOG_LEVEL: tracing::Level = tracing::Level::DEBUG;
-
 #[macro_use]
 mod utils;
 use tokio::runtime::Runtime;
@@ -136,7 +130,7 @@ fn setup_tracing() {
 
     let filter = tracing_subscriber::filter::Targets::new()
         .with_default(tracing::Level::INFO)
-        .with_target("redditbg", REDDITBG_LOG_LEVEL);
+        .with_target("redditbg", tracing::level_filters::STATIC_MAX_LEVEL);
 
     let fmt =
         tracing_subscriber::fmt::layer().event_format(tracing_subscriber::fmt::format().pretty());
