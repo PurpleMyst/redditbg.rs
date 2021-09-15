@@ -47,8 +47,7 @@ fn find_new_background(runtime: &mut Runtime, client: &Client) -> Result<()> {
             info!("got posts");
 
             // Fetch them
-            let fetched = fetcher::fetch(client, posts).await?;
-            info!(fetched, "fetched");
+            fetcher::fetch(client, posts).await?;
 
             Ok(())
         })
@@ -77,8 +76,8 @@ fn find_new_background(runtime: &mut Runtime, client: &Client) -> Result<()> {
         }
     };
 
-    trace!("resizing background");
     let (w, h) = platform::screen_size()?;
+    debug!(width = w, height = h, "resizing background");
     let picked = picked.resize(w, h, image::imageops::FilterType::Lanczos3);
 
     // Save it to the filesystem so that we can set it
