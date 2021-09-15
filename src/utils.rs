@@ -1,9 +1,12 @@
 use std::collections::HashSet;
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use exponential_backoff::Backoff;
 use eyre::Result;
-use futures_retry::{ErrorHandler, RetryPolicy};
+use futures::Future;
+use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
@@ -102,26 +105,21 @@ impl PersistentSet {
     }
 }
 
-// XXX: this shouldn't be a macro
-#[macro_export]
-macro_rules! with_backoff {
-    ($expr:expr) => {{
-        use ::exponential_backoff::Backoff;
-        use ::futures_retry::FutureRetry;
-        use ::std::time::Duration;
+pub(crate) async fn with_backoff<T, E, F, Factory>(factory: Factory) -> Result<T, E>
+where
+    F: Future<Output = Result<T, E>>,
+    Factory: std::marker::Unpin + FnMut() -> F,
+{
+    let mut backoff = Backoff::new(10, Duration::from_secs(1), Duration::from_secs(15));
+    backoff.set_jitter(0.3);
+    backoff.set_factor(2);
 
-        let mut backoff = Backoff::new(10, Duration::from_secs(1), Duration::from_secs(15));
-        backoff.set_jitter(0.3);
-        backoff.set_factor(2);
-
-        let retry_future = FutureRetry::new($expr, $crate::utils::BackoffPolicy(backoff.iter()));
-        match retry_future.await {
-            Ok((value, _)) => Ok(value),
-            Err((err, _)) => Err(err),
-        }
-    }};
+    let retry = FutureRetry::new(factory, BackoffPolicy(backoff.iter()));
+    match retry.await {
+        Ok((value, _)) => Ok(value),
+        Err((error, _)) => Err(error),
+    }
 }
-
 pub struct JoinOnDrop {
     handle: Option<std::thread::JoinHandle<Result<()>>>,
 }

@@ -9,6 +9,7 @@ use std::time::Duration;
 use directories::ProjectDirs;
 use eyre::{bail, Result, WrapErr};
 use reqwest::Client;
+use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, Level};
 
 lazy_static::lazy_static! {
@@ -19,9 +20,7 @@ lazy_static::lazy_static! {
     ).expect("could not get project dirs");
 }
 
-#[macro_use]
 mod utils;
-use tokio::runtime::Runtime;
 
 mod reddit;
 
