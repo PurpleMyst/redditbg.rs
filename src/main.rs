@@ -125,7 +125,7 @@ fn setup_tracing() {
     }
     .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
         metadata.is_event()
-            && (*metadata.level() == Level::ERROR || metadata.target() == "notification")
+            && (*metadata.level() == Level::ERROR || metadata.target().ends_with("notification"))
     }));
 
     let filter = tracing_subscriber::filter::Targets::new()
