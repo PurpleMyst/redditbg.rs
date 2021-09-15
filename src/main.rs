@@ -20,10 +20,10 @@ lazy_static::lazy_static! {
 }
 
 #[cfg(debug_assertions)]
-const REDDITBG_LOG_LEVEL: tracing::Level = tracing::Level::DEBUG;
+const REDDITBG_LOG_LEVEL: tracing::Level = tracing::Level::TRACE;
 
 #[cfg(not(debug_assertions))]
-const REDDITBG_LOG_LEVEL: tracing::Level = tracing::Level::TRACE;
+const REDDITBG_LOG_LEVEL: tracing::Level = tracing::Level::DEBUG;
 
 #[macro_use]
 mod utils;
