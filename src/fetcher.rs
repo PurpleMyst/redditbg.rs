@@ -215,7 +215,10 @@ impl<'client> Fetcher<'client> {
     where
         Urls: Stream<Item = String> + Unpin,
     {
+        // Iterate over the given URLs, counting how many we "touch".
+        let mut touched = 0;
         let mut futures = urls
+            .inspect(|_| touched += 1)
             // Skip over URLs we've already examined
             .filter(|url| {
                 future::ready(!self.downloaded.contains(url) && !self.invalid.contains(url))
@@ -226,26 +229,16 @@ impl<'client> Fetcher<'client> {
             .buffer_unordered(25);
 
         // Iterate over the futures as they complete and stop once we've gotten enough.
-        let mut touched = 0;
-        let mut successful = 0;
         while let Some(res) = futures.next().await {
-            touched += 1;
-            if let Ok(()) = res {
-                successful += 1;
-            }
-            let gotten = self.gotten.load(Ordering::SeqCst);
-            trace!(
-                ok = res.is_ok(),
-                touched,
-                successful,
-                gotten,
-                "fetch_multiple step"
-            );
+            let gotten = self.gotten.load(Ordering::Acquire);
+            trace!(gotten, success = res.is_ok(), "future completed");
             if gotten >= self.need {
                 break;
             }
         }
 
+        // Drop `futures` to ensure `touched` isn't mutably borrowed anymore, so we can return it.
+        drop(futures);
         Ok(touched)
     }
 
