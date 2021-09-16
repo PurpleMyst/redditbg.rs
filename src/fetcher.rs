@@ -20,6 +20,9 @@ use crate::DIRS;
 // This value is kinda arbitrary but there are 25 potential images in one reddit page
 const MAX_CACHED: usize = 25;
 
+// The accepted difference between the screen's aspect ratio and a potential image's aspect ratio
+const ASPECT_RATIO_EPSILON: f64 = 0.01;
+
 /// Append a generated filename for an url to the given path buffer
 fn make_filename(url: &str, image_format: ImageFormat) -> PathBuf {
     let mut path = DIRS.data_local_dir().join("images");
@@ -34,7 +37,8 @@ fn make_filename(url: &str, image_format: ImageFormat) -> PathBuf {
     path
 }
 
-async fn download_count() -> Result<usize> {
+/// Count how many images we've got cached.
+async fn count_downloaded() -> Result<usize> {
     let path = DIRS.data_local_dir().join("images");
     Ok(ReadDirStream::new(fs::read_dir(path).await?)
         .fold(0usize, |acc, _| future::ready(acc + 1))
@@ -63,17 +67,35 @@ struct Fetcher<'client> {
 }
 
 impl<'client> Fetcher<'client> {
+    async fn new(client: &'client Client) -> Result<Fetcher<'client>> {
+        let downloaded = PersistentSet::load("downloaded").await?;
+        let invalid = PersistentSet::load("invalid").await?;
+        let need = MAX_CACHED.saturating_sub(count_downloaded().await?);
+        let (invalid_tx, invalid_rx) = unbounded_channel();
+        Ok(Self {
+            downloaded,
+            invalid,
+            need,
+            gotten: AtomicUsize::new(0),
+            client,
+            invalid_tx: Some(invalid_tx),
+            invalid_rx,
+        })
+    }
+
     #[tracing::instrument(skip_all)]
-    async fn try_as_direct_image(&self, url: &str, body: Bytes) -> Result<()> {
+    async fn parse_direct_image(&self, url: &str, body: Bytes) -> Result<()> {
+        // Try to guess the format of the given body.
+        // This will fail if the body isn't an image, returning early.
         let image_format = image::guess_format(&body)?;
         trace!(format = ?image_format, "got image");
 
-        // Check the aspect ratio of our image
+        // Ensure the aspect ratio of the image is similiar to the one of the screen.
         let img = image::load_from_memory_with_format(&body, image_format)?;
         let (iw, ih) = (img.width(), img.height());
         let (sw, sh) = platform::screen_size()?;
         ensure!(
-            (iw as f64 / ih as f64 - sw as f64 / sh as f64).abs() <= 0.01,
+            (iw as f64 / ih as f64 - sw as f64 / sh as f64).abs() <= ASPECT_RATIO_EPSILON,
             "Aspect ratio not within two decimal places ({}:{} instead of {}:{})",
             iw,
             ih,
@@ -81,19 +103,20 @@ impl<'client> Fetcher<'client> {
             sh
         );
 
-        // Let's calculate the path we want
+        // Let's calculate the path the image should be saved to.
         let path = make_filename(url, image_format);
 
-        // Now we'll write it to a temporary file that will then be *atomically* persisted once it's all written
-        // The use of `spawn_blocking` means that once we start writing an image we *will* write an image
-        // As per the tokio docs:
-        // "Closures spawned using spawn_blocking cannot be cancelled.
-        //  When you shut down the executor, it will wait indefinitely for all blocking operations to finish."
+        // Now we'll write the image to a temporary file, that will then be
+        // persisted once it's all written. The use of `spawn_blocking` means that once
+        // we start writing an image, we will write an image. As per the tokio docs:
+        // "Closures spawned using spawn_blocking cannot be cancelled. When you shut
+        // down the executor, it will wait indefinitely for all blocking operations to
+        // finish."
         tokio::task::spawn_blocking({
             move || -> Result<()> {
                 use std::io::prelude::*;
                 let mut file = tempfile::NamedTempFile::new()?;
-                trace!(path = ?file.path(), "created temporary file");
+                trace!(path = %file.path().display(), "created temporary file");
                 file.write_all(&body).wrap_err("writing body")?;
                 trace!("flushing temporary file");
                 file.flush().wrap_err("flushing")?;
@@ -104,14 +127,16 @@ impl<'client> Fetcher<'client> {
         })
         .await??;
 
-        self.gotten.fetch_add(1, Ordering::SeqCst);
+        // If we get here, we've succesffully persisted an image to disk and
+        // we can add it to the `gotten` count.
+        self.gotten.fetch_add(1, Ordering::AcqRel);
 
         Ok(())
     }
 
     #[tracing::instrument(skip_all)]
     #[async_recursion(?Send)]
-    async fn try_as_imgur_gallery(&self, url: &str, body: Bytes) -> Result<()> {
+    async fn parse_imgur_gallery(&self, url: &str, body: Bytes) -> Result<()> {
         // Parse HTML and ensure there were no errors
         let html = scraper::Html::parse_document(
             std::str::from_utf8(&body).wrap_err("Body was not valid UTF-8.")?,
@@ -165,6 +190,7 @@ impl<'client> Fetcher<'client> {
     #[tracing::instrument(skip(self))]
     #[async_recursion(?Send)]
     async fn fetch_one(&self, url: String) -> Result<()> {
+        // We create a closure as a pseudo-try block.
         let result = (|| async {
             // Fetch the url's body
             let body: Bytes = with_backoff(|| {
@@ -178,16 +204,16 @@ impl<'client> Fetcher<'client> {
             .wrap_err_with(|| format!("Failed to fetch {:?}", url))?;
             trace!(size = body.len(), "got body");
 
-            // Try to save it as a direct image. If it succeeds, we've saved one image.
-            match self.try_as_direct_image(&url, body.clone()).await {
+            // Try to parse it as a direct image.
+            match self.parse_direct_image(&url, body.clone()).await {
                 Ok(()) => return Ok(()),
                 Err(error) => {
                     trace!(%error, "failed direct image check");
                 }
             }
 
-            // Try to save it as an imgur gallery.
-            match self.try_as_imgur_gallery(&url, body.clone()).await {
+            // Try to parse it as an imgur gallery.
+            match self.parse_imgur_gallery(&url, body.clone()).await {
                 Ok(..) => return Ok(()),
                 Err(error) => {
                     trace!(%error, "failed imgur gallery check");
@@ -199,6 +225,7 @@ impl<'client> Fetcher<'client> {
         })()
         .await;
 
+        // Having collected the result, if we got an error log it and mark this URL as invalid.
         if let Err(ref error) = result {
             warn!(%url, %error, "failed fetching");
             if let Some(ref tx) = self.invalid_tx {
@@ -279,18 +306,5 @@ pub async fn fetch<Urls>(client: &Client, urls: Urls) -> Result<()>
 where
     Urls: Stream<Item = String> + Unpin,
 {
-    let downloaded = PersistentSet::load("downloaded").await?;
-    let invalid = PersistentSet::load("invalid").await?;
-    let need = MAX_CACHED.saturating_sub(download_count().await?);
-    let (invalid_tx, invalid_rx) = unbounded_channel();
-    let fetcher = Fetcher {
-        downloaded,
-        invalid,
-        need,
-        gotten: AtomicUsize::new(0),
-        client,
-        invalid_tx: Some(invalid_tx),
-        invalid_rx,
-    };
-    fetcher.fetch_toplevel(urls).await
+    Fetcher::new(client).await?.fetch_toplevel(urls).await
 }
