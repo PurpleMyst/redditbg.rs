@@ -123,11 +123,7 @@ impl<'client> Fetcher<'client> {
             .select(&scraper::Selector::parse("script").map_err(|_| {
                 format_err!("Could not parse `script` selector. In other news, 1 = 2.")
             })?)
-            .find(|tag| {
-                tag.text()
-                    .next()
-                    .map_or(false, |text| text.contains("postDataJSON"))
-            })
+            .find(|tag| tag.text().any(|text| text.contains("postDataJSON")))
             .ok_or_else(|| format_err!("Could not find postDataJSON in body."))?;
         let text = script.text().collect::<String>();
 
