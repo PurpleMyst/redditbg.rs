@@ -12,6 +12,8 @@ use reqwest::Client;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, Level};
 
+use crate::utils::LogError;
+
 lazy_static::lazy_static! {
     static ref DIRS: ProjectDirs = ProjectDirs::from(
         "it",
@@ -42,36 +44,31 @@ fn find_new_background(runtime: &mut Runtime, client: &Client) -> Result<()> {
     let mut already_fetched = false;
     let do_fetch = || -> Result<()> {
         runtime.block_on(async {
-            // Get the list of images from reddit
+            // Create a stream of URLs from Reddit
             let posts = reddit::Posts::new(client, &subreddits);
-            info!("got posts");
 
             // Fetch them
-            fetcher::fetch(client, posts).await?;
-
-            Ok(())
+            fetcher::fetch(client, posts).await
         })
     };
 
-    let picked = {
-        // Try to pick an image from the ones we've already fetched, so that we
-        // don't make our user wait too long in the case that they don't have
-        // internet access at the present moment
-        match picker::pick() {
-            // If that succeeds, just return it
-            Ok(img) => img,
+    // Try to pick an image from the ones we've already fetched, so that we don't make
+    // our user wait too long in the case that they don't have internet access at the
+    // present moment.
+    let picked = match picker::pick() {
+        // If that succeeds, just return it
+        Ok(img) => img,
 
-            Err(err) => {
-                if let Some(picker::NoValidImage) = err.downcast_ref() {
-                    debug!("found no valid image on first try");
-                    // Otherwise, if we found no valid image, try to fetch them and pick again
-                    do_fetch()?;
-                    already_fetched = true;
-                    picker::pick()?
-                } else {
-                    // If we got any other error, bail and return it to the caller
-                    bail!(err);
-                }
+        Err(err) => {
+            if let Some(picker::NoValidImage) = err.downcast_ref() {
+                // Otherwise, if we found no valid image, try to fetch them and pick again
+                debug!("found no valid image on first try");
+                do_fetch()?;
+                already_fetched = true;
+                picker::pick()?
+            } else {
+                // If we got any other error, bail and return it to the caller
+                bail!(err);
             }
         }
     };
@@ -164,7 +161,6 @@ enum Message {
 
 const ICON_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/icon.ico");
 
-// TODO: fork systray so we can make it actually work with async
 fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
     let mut app = systray::Application::new()?;
 
@@ -179,7 +175,7 @@ fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
 
             if let Err(error) = tx.send(Message::ChangeNow) {
                 let error = eyre::Report::from(error);
-                error!(%error, "could not send message");
+                error!(error = %LogError(&error), "could not send message");
             }
 
             Ok(())
@@ -195,7 +191,7 @@ fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
 
                 if let Err(error) = tx.send(Message::CopyImage) {
                     let error = eyre::Report::from(error);
-                    error!(%error, "could not send message");
+                    error!(error = %LogError(&error), "could not send message");
                 }
 
                 Ok(())
@@ -209,13 +205,13 @@ fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
         // at this point i'm praying this works
         if let Err(error) = app.shutdown() {
             let error = eyre::Report::from(error);
-            error!(%error, "shutdown failed");
+            error!(error = %LogError(&error), "shutdown failed");
         }
         app.quit();
 
         if let Err(error) = tx.send(Message::Quit) {
             let error = eyre::Report::from(error);
-            error!(%error, "could not send message");
+            error!(error = %LogError(&error), "could not send message");
         }
 
         Ok(())
@@ -243,7 +239,7 @@ fn main() -> Result<()> {
         match find_new_background(&mut runtime, &client) {
             Ok(()) => info!("set background successfully"),
             Err(error) => {
-                error!(%error, "error while finding new background")
+                error!(error = %LogError(&error), "error while finding new background")
             }
         }
 
@@ -268,7 +264,7 @@ fn main() -> Result<()> {
                         Ok(()) => info!(target: "notification", "copied image"),
 
                         Err(error) => {
-                            error!(%error, "copy image error");
+                            error!(error = %LogError(&error), "copy image error");
                         }
                     }
                 }

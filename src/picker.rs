@@ -4,7 +4,7 @@ use eyre::Result;
 use image::DynamicImage;
 use tracing::{debug, info, trace, warn};
 
-use crate::DIRS;
+use crate::{utils::LogError, DIRS};
 
 #[derive(Debug)]
 pub struct NoValidImage;
@@ -34,11 +34,11 @@ pub fn pick() -> Result<DynamicImage> {
                 Ok(image) => Some((path, image)),
 
                 Err(error) => {
-                    debug!(%error, "could not parse image");
+                    debug!(error = %LogError(&error), "could not parse image");
                     trace!("removing image");
                     if let Err(error) = std::fs::remove_file(&path) {
                         let error = eyre::Report::from(error);
-                        warn!(%error, "error while removing");
+                        warn!(error = %LogError(&error), "error while removing");
                     }
                     None
                 }

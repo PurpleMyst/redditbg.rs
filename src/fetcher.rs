@@ -14,7 +14,7 @@ use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, trace, warn};
 
 use crate::platform;
-use crate::utils::{with_backoff, PersistentSet};
+use crate::utils::{with_backoff, LogError, PersistentSet};
 use crate::DIRS;
 
 // This value is kinda arbitrary but there are 25 potential images in one reddit page
@@ -208,7 +208,7 @@ impl<'client> Fetcher<'client> {
             match self.parse_direct_image(&url, body.clone()).await {
                 Ok(()) => return Ok(()),
                 Err(error) => {
-                    trace!(%error, "failed direct image check");
+                    trace!(error = %LogError(&error), "failed direct image check");
                 }
             }
 
@@ -216,7 +216,7 @@ impl<'client> Fetcher<'client> {
             match self.parse_imgur_gallery(&url, body.clone()).await {
                 Ok(..) => return Ok(()),
                 Err(error) => {
-                    trace!(%error, "failed imgur gallery check");
+                    trace!(error = %LogError(&error), "failed imgur gallery check");
                 }
             }
 
@@ -227,7 +227,7 @@ impl<'client> Fetcher<'client> {
 
         // Having collected the result, if we got an error log it and mark this URL as invalid.
         if let Err(ref error) = result {
-            warn!(%url, %error, "failed fetching");
+            warn!(%url, error = %LogError(&error), "failed fetching");
             if let Some(ref tx) = self.invalid_tx {
                 let _ = tx.send(url);
             }
