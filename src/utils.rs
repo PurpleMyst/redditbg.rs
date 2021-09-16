@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use std::fmt::{Debug, Display};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -43,7 +44,7 @@ impl PersistentSet {
             Ok(file) => file,
             Err(error) => {
                 let error = eyre::Report::from(error);
-                warn!(name, %error, path = %path.display(), "failed to open persistent set");
+                warn!(name, error = %LogError(&error), path = %path.display(), "failed to open persistent set");
                 return Ok(Self {
                     name,
                     contents: HashSet::new(),
@@ -138,18 +139,17 @@ impl Drop for JoinOnDrop {
             Ok(Ok(())) => debug!("child thread joined"),
 
             Ok(Err(error)) => {
-                error!(%error, "child thread returned error")
+                error!(error = %LogError(&error), "child thread returned error")
             }
 
             Err(error) => {
-                let error: &dyn std::fmt::Display =
-                    if let Some(error) = error.downcast_ref::<String>() {
-                        error
-                    } else if let Some(error) = error.downcast_ref::<&'static str>() {
-                        error
-                    } else {
-                        &"not of known type"
-                    };
+                let error: &dyn Display = if let Some(error) = error.downcast_ref::<String>() {
+                    error
+                } else if let Some(error) = error.downcast_ref::<&'static str>() {
+                    error
+                } else {
+                    &"not of known type"
+                };
 
                 error!(%error, "child thread panic")
             }
@@ -179,5 +179,13 @@ impl<W: std::io::Write> std::io::Write for MutexWriter<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.0.lock().unwrap().flush()
+    }
+}
+
+pub(crate) struct LogError<T: Debug>(pub(crate) T);
+
+impl<T: Debug> Display for LogError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?}", self.0)
     }
 }
