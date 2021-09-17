@@ -76,7 +76,7 @@ impl<'client> Fetcher<'client> {
         })
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip(self, body))]
     async fn parse_direct_image(&self, url: &str, body: Bytes) -> Result<()> {
         // Try to guess the format of the given body.
         // This will fail if the body isn't an image, returning early.

@@ -2,7 +2,7 @@ use async_recursion::async_recursion;
 use bytes::Bytes;
 use eyre::{ensure, format_err, Result, WrapErr};
 use futures::stream;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use super::Fetcher;
 
