@@ -50,12 +50,16 @@ impl<'client> Fetcher<'client> {
         );
         ensure!(html.errors.is_empty(), "html.errors was not empty");
 
-        // Extract a script tag containing the text "postDataJSON"
-        let script = html
-            .select(&scraper::Selector::parse("script#data").unwrap())
-            .next()
-            .ok_or_else(|| format_err!("Could not find script with id 'data' in body."))?;
-        let text = script.text().collect::<String>();
+        // Extract a script tag whose code starts with "window.___r"
+        // Before, this script tag had the id "data" but it seems they've removed that. In any
+        // case, this code is more robust.
+        let text = html
+            .select(&scraper::Selector::parse("script").unwrap())
+            .find_map(|script| {
+                let text = script.text().collect::<String>();
+                text.trim().starts_with("window.___r").then(|| text)
+            })
+            .ok_or_else(|| format_err!("Could not find a valid script tag."))?;
 
         // That script that will be of the format `window.___r = {...}`. We're
         // interested in just the "..." bit, so extract that.
