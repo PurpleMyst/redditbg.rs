@@ -200,6 +200,7 @@ impl<'client> Fetcher<'client> {
             .inspect(|_| touched += 1)
             // Skip over URLs we've already examined
             .filter(|url| {
+                trace!(%url, downloaded = self.downloaded.contains(url), invalid = self.invalid.contains(url), "url status");
                 future::ready(!self.downloaded.contains(url) && !self.invalid.contains(url))
             })
             // Start fetching the specfic URLs themselves
