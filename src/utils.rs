@@ -4,7 +4,7 @@ use std::{
 };
 
 use exponential_backoff::Backoff;
-use eyre::{Result};
+use eyre::Result;
 use futures::Future;
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use rusqlite::{params, OptionalExtension};

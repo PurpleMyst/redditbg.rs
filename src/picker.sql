@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS AppliedImages (
+    image_hash BLOB NOT NULL PRIMARY KEY
+);
