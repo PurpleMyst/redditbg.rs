@@ -232,7 +232,6 @@ impl<'client> Fetcher<'client> {
                 .and_then(|s| Some(BASE64_URL_SAFE_NO_PAD.decode(s.as_bytes()).ok()?))
                 .and_then(|buf| String::from_utf8(buf).ok())
             {
-                trace!(url, "adding to downloaded");
                 self.downloaded.insert(url).await?;
             }
         }
