@@ -1,21 +1,27 @@
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use async_recursion::async_recursion;
 use bytes::Bytes;
 use eyre::{ensure, format_err, Result, WrapErr};
 use futures::prelude::*;
-use image::{GenericImageView, ImageFormat};
+use image::ImageFormat;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tokio::fs;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::{
+    fs,
+    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+};
 use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, trace, warn};
 
-use crate::platform;
-use crate::utils::{with_backoff, LogError, PersistentSet};
-use crate::DIRS;
+use crate::{
+    platform,
+    utils::{with_backoff, LogError, PersistentSet},
+    DIRS,
+};
 
 // This value is kinda arbitrary but there are 25 potential images in one reddit page
 const MAX_CACHED: usize = 25;
@@ -200,7 +206,11 @@ impl<'client> Fetcher<'client> {
             .inspect(|_| touched += 1)
             // Skip over URLs we've already examined
             .filter(|url| {
-                trace!(%url, downloaded = self.downloaded.contains(url), invalid = self.invalid.contains(url), "url status");
+                trace!(
+                    %url,
+                    downloaded = self.downloaded.contains(url), invalid = self.invalid.contains(url),
+                    "url status"
+                );
                 future::ready(!self.downloaded.contains(url) && !self.invalid.contains(url))
             })
             // Start fetching the specfic URLs themselves

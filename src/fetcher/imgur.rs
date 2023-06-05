@@ -21,16 +21,15 @@ impl<'client> Fetcher<'client> {
     #[async_recursion(?Send)]
     pub(super) async fn parse_imgur_gallery(&self, url: &str, body: Bytes) -> Result<()> {
         // Parse HTML and ensure there were no errors
-        let html = scraper::Html::parse_document(
-            std::str::from_utf8(&body).wrap_err("Body was not valid UTF-8.")?,
-        );
+        let html = scraper::Html::parse_document(std::str::from_utf8(&body).wrap_err("Body was not valid UTF-8.")?);
         ensure!(html.errors.is_empty(), "html.errors was not empty");
 
         // Extract a script tag containing the text "postDataJSON"
         let script = html
-            .select(&scraper::Selector::parse("script").map_err(|_| {
-                format_err!("Could not parse `script` selector. In other news, 1 = 2.")
-            })?)
+            .select(
+                &scraper::Selector::parse("script")
+                    .map_err(|_| format_err!("Could not parse `script` selector. In other news, 1 = 2."))?,
+            )
             .find(|tag| tag.text().any(|text| text.contains("postDataJSON")))
             .ok_or_else(|| format_err!("Could not find postDataJSON in body."))?;
         let text = script.text().collect::<String>();
@@ -46,10 +45,9 @@ impl<'client> Fetcher<'client> {
         let code = &text[start..end + 1];
 
         // Parse the javascript string as a String and then parse its contents as a gallery
-        let data: String =
-            serde_json::from_str(code).wrap_err("Could not parse postDataJSON as a String")?;
-        let gallery: ImgurGallery = serde_json::from_str(&data)
-            .wrap_err("Could not parse inner postDataJSON as a gallery")?;
+        let data: String = serde_json::from_str(code).wrap_err("Could not parse postDataJSON as a String")?;
+        let gallery: ImgurGallery =
+            serde_json::from_str(&data).wrap_err("Could not parse inner postDataJSON as a gallery")?;
         trace!(?gallery.media, "parsed imgur gallery");
 
         // Make an iterator over the gallery's images

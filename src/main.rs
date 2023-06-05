@@ -1,10 +1,12 @@
 #![recursion_limit = "512"]
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
-use std::convert::Infallible;
-use std::fs;
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::{
+    convert::Infallible,
+    fs,
+    sync::mpsc::{sync_channel, Receiver, RecvTimeoutError},
+    time::Duration,
+};
 
 use directories::ProjectDirs;
 use eyre::{bail, Result, WrapErr};
@@ -34,8 +36,8 @@ mod platform;
 
 #[tracing::instrument(skip_all)]
 fn find_new_background(runtime: &mut Runtime, client: &Client) -> Result<()> {
-    let subreddits_txt = fs::read_to_string(DIRS.config_dir().join("subreddits.txt"))
-        .wrap_err("Could not read subreddits.txt")?;
+    let subreddits_txt =
+        fs::read_to_string(DIRS.config_dir().join("subreddits.txt")).wrap_err("Could not read subreddits.txt")?;
 
     let subreddits = subreddits_txt.trim().lines().collect::<Vec<&str>>();
     info!(?subreddits, "using subreddits");
@@ -106,32 +108,30 @@ fn setup_dirs() -> Result<()> {
 fn setup_tracing() {
     use tracing_subscriber::prelude::*;
 
-    let file = utils::MutexWriter::new(file_rotator::RotatingFile::new(
+    let file = std::sync::Mutex::new(file_rotator::RotatingFile::new(
         env!("CARGO_PKG_NAME"),
         DIRS.data_local_dir().join("logs"),
         file_rotator::RotationPeriod::Interval(std::time::Duration::from_secs(60 * 60 * 24)),
-        std::num::NonZeroUsize::new(7).unwrap(),
+        std::num::NonZeroUsize::new(128).unwrap(),
+        file_rotator::Compression::Zstd { level: 0 },
     ));
-    let mw = move || file.clone();
 
     let notifier = platform::Notifier {
         title: env!("CARGO_PKG_NAME").into(),
         icon: ICON_PATH.into(),
     }
     .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
-        metadata.is_event()
-            && (*metadata.level() == Level::ERROR || metadata.target().ends_with("notification"))
+        metadata.is_event() && (*metadata.level() == Level::ERROR || metadata.target().ends_with("notification"))
     }));
 
     let filter = tracing_subscriber::filter::Targets::new()
         .with_default(tracing::Level::INFO)
         .with_target("redditbg", tracing::level_filters::STATIC_MAX_LEVEL);
 
-    let fmt =
-        tracing_subscriber::fmt::layer().event_format(tracing_subscriber::fmt::format().pretty());
+    let fmt = tracing_subscriber::fmt::layer().event_format(tracing_subscriber::fmt::format().pretty());
 
     let bunyan = tracing_bunyan_formatter::JsonStorageLayer.and_then(
-        tracing_bunyan_formatter::BunyanFormattingLayer::new(env!("CARGO_PKG_NAME").into(), mw),
+        tracing_bunyan_formatter::BunyanFormattingLayer::new(env!("CARGO_PKG_NAME").into(), file),
     );
 
     tracing_subscriber::registry()
@@ -142,11 +142,7 @@ fn setup_tracing() {
 
 fn setup_client() -> Result<Client> {
     Client::builder()
-        .user_agent(concat!(
-            env!("CARGO_PKG_NAME"),
-            "/",
-            env!("CARGO_PKG_VERSION")
-        ))
+        .user_agent(concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(10))
         .build()
@@ -184,19 +180,16 @@ fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
 
     {
         let tx = tx.clone();
-        app.add_menu_item(
-            "Copy background to clipboard",
-            move |_app| -> Result<(), Infallible> {
-                info!(payload = "copy image", "sending message");
+        app.add_menu_item("Copy background to clipboard", move |_app| -> Result<(), Infallible> {
+            info!(payload = "copy image", "sending message");
 
-                if let Err(error) = tx.send(Message::CopyImage) {
-                    let error = eyre::Report::from(error);
-                    error!(error = %LogError(&error), "could not send message");
-                }
+            if let Err(error) = tx.send(Message::CopyImage) {
+                let error = eyre::Report::from(error);
+                error!(error = %LogError(&error), "could not send message");
+            }
 
-                Ok(())
-            },
-        )?;
+            Ok(())
+        })?;
     }
 
     app.add_menu_item("Quit", move |app| -> Result<(), Infallible> {
@@ -258,9 +251,8 @@ fn main() -> Result<()> {
                 Ok(Message::CopyImage) => {
                     match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
                         .map_err(eyre::Error::from)
-                        .and_then(|reader| {
-                            platform::copy_image(reader.with_guessed_format()?.decode()?)
-                        }) {
+                        .and_then(|reader| platform::copy_image(reader.with_guessed_format()?.decode()?))
+                    {
                         Ok(()) => info!(target: "notification", "copied image"),
 
                         Err(error) => {
