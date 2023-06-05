@@ -1,20 +1,15 @@
-use std::collections::HashSet;
-
 use std::{
     fmt::{Debug, Display},
     time::Duration,
 };
 
 use exponential_backoff::Backoff;
-use eyre::Result;
+use eyre::{Result};
 use futures::Future;
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use sha2::{Digest, Sha256};
-use tokio::{
-    fs,
-    io::{self, AsyncBufReadExt, AsyncWriteExt},
-};
-use tracing::{debug, error, trace, warn};
+use rusqlite::{params, OptionalExtension};
+use tokio::sync::OnceCell;
+use tracing::{debug, error, trace};
 
 use crate::DIRS;
 
@@ -31,81 +26,65 @@ impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
     }
 }
 
+pub fn report_ie(ie: deadpool_sqlite::InteractError) -> eyre::Report {
+    eyre::format_err!("Interact error: {ie:?}")
+}
+
+static DB_POOL: OnceCell<deadpool_sqlite::Pool> = OnceCell::const_new();
+
+#[derive(Clone, Copy, Debug)]
 pub struct PersistentSet {
     name: &'static str,
-    contents: HashSet<String>,
 }
 
 impl PersistentSet {
-    pub async fn load(name: &'static str) -> Result<Self> {
-        // We use this in all subsequent logging calls rather than setting it as
-        // a logger value because that introduces weird borrowck things
-        let path = DIRS.data_local_dir().join(format!("{}.txt", name));
-
-        trace!(path = %path.display(), "loading persistent set");
-        let file = match fs::OpenOptions::new().read(true).open(&path).await {
-            Ok(file) => file,
-            Err(error) => {
-                let error = eyre::Report::from(error);
-                warn!(name, error = %LogError(&error), path = %path.display(), "failed to open persistent set");
-                return Ok(Self {
-                    name,
-                    contents: HashSet::new(),
-                });
-            }
-        };
-
-        let mut reader = io::BufReader::new(file);
-        let mut contents = HashSet::new();
-
-        loop {
-            let mut line = String::new();
-            let read = reader.read_line(&mut line).await?;
-            if read == 0 {
-                break;
-            }
-            if line.ends_with('\n') {
-                // Remove the final newline if it is present
-                line.pop();
-            }
-            contents.insert(line);
-        }
-        trace!(path = %path.display(), "loaded persistent set");
-        Ok(Self { name, contents })
+    pub async fn new(name: &'static str) -> Result<Self> {
+        let _pool = DB_POOL
+            .get_or_try_init(|| async {
+                let cfg = deadpool_sqlite::Config::new(DIRS.data_local_dir().join("db.sqlite3"));
+                let pool = cfg.builder(deadpool_sqlite::Runtime::Tokio1)?.build()?;
+                pool.get()
+                    .await?
+                    .interact(|conn| conn.execute_batch(include_str!("persistent_set.sql")))
+                    .await
+                    .map_err(report_ie)??;
+                Ok::<_, eyre::Report>(pool)
+            })
+            .await?;
+        Ok(Self { name })
     }
 
-    pub async fn store(self) -> Result<()> {
-        let path = DIRS.data_local_dir().join(format!("{}.txt", self.name));
-        trace!(path = %path.display(), "storing persistent set");
-        let contents = self.contents.into_iter().collect::<Vec<_>>().join("\n");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)
-            .await?;
-        file.write_all(contents.as_bytes()).await?;
-        file.sync_all().await?;
+    pub async fn insert(&self, url: String) -> Result<()> {
+        trace!(?self, ?url, "inserting into persistent set");
+        let name = self.name; // so that the closure is able to Copy the static str into it
+        let conn = DB_POOL.get().unwrap().get().await?;
+        conn.interact(move |conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO PersistentSets(name, url) VALUES (?, ?)",
+                params![name, url],
+            )
+        })
+        .await
+        .map_err(report_ie)??;
         Ok(())
     }
 
-    fn hash(url: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(url);
-        let hash = hasher.finalize();
-        format!("{:x}", hash)
-    }
-
-    pub fn insert(&mut self, value: String) -> bool {
-        self.insert_hash(Self::hash(&value))
-    }
-
-    pub fn insert_hash(&mut self, hash: String) -> bool {
-        self.contents.insert(hash)
-    }
-
-    pub fn contains(&self, url: &str) -> bool {
-        self.contents.contains(&Self::hash(url))
+    pub async fn contains(&self, url: String) -> Result<bool> {
+        trace!(?self, ?url, "checking persistent set");
+        let name = self.name;
+        let conn = DB_POOL.get().unwrap().get().await?;
+        Ok(conn
+            .interact(move |conn| {
+                conn.query_row(
+                    "SELECT rowid FROM PersistentSets WHERE name = ? AND url = ?",
+                    params![name, url],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map(|o| o.is_some())
+            })
+            .await
+            .map_err(report_ie)??)
     }
 }
 

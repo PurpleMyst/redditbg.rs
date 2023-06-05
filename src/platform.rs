@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use eyre::{ensure, Result, WrapErr};
+use eyre::{ensure, format_err, Result, WrapErr};
 
 macro_rules! wintry {
     ($expr:expr) => {
@@ -137,7 +137,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Notifier {
             )
             .show()
             .map_err(|err| {
-                eyre::format_err!(
+                format_err!(
                     "Failed to show notification: {:?} (CODE {:?}, WIN32 CODE {:?})",
                     err.message(),
                     err.code(),
