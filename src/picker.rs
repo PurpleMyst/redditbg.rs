@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf};
 
 use eyre::Result;
 use image::DynamicImage;
-use tracing::{debug, info, trace, warn, trace_span};
+use tracing::{debug, info, trace, trace_span, warn};
 use tracing_unwrap::*;
 
 use crate::{utils::LogError, DIRS};
