@@ -1,6 +1,6 @@
 [package]
 name = "redditbg"
-version = "4.3.1"
+version = "5.0.0"
 authors = ["PurpleMyst <PurpleMyst@users.noreply.github.com>"]
 edition = "2018"
 include = ["src/**/*", "readme.md"]
