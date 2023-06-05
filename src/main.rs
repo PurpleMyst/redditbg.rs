@@ -16,13 +16,9 @@ use tracing::{debug, error, info, trace, Level};
 
 use crate::utils::LogError;
 
-lazy_static::lazy_static! {
-    static ref DIRS: ProjectDirs = ProjectDirs::from(
-        "it",
-        "PurpleMyst",
-        env!("CARGO_PKG_NAME")
-    ).expect("could not get project dirs");
-}
+static DIRS: once_cell::sync::Lazy<ProjectDirs> = once_cell::sync::Lazy::new(|| {
+    ProjectDirs::from("it", "PurpleMyst", env!("CARGO_PKG_NAME")).expect("could not create ProjectDirs")
+});
 
 mod utils;
 

@@ -60,9 +60,7 @@ impl<'client> Fetcher<'client> {
         // If we've touched all the images in the gallery, we've exhausted it and can therefore consider it "invalid"
         if touched >= url_amount {
             debug!(%url, "exhausted imgur gallery");
-            if let Some(ref tx) = self.invalid_tx {
-                let _ = tx.send(url.to_string());
-            }
+            self.invalid.insert(url.to_string()).await?;
         }
 
         Ok(())

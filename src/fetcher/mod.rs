@@ -1,21 +1,19 @@
 use std::{
+    ffi::OsStr,
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
 use async_recursion::async_recursion;
+use base64::prelude::*;
 use bytes::Bytes;
 use eyre::{ensure, format_err, Result, WrapErr};
 use futures::prelude::*;
 use image::ImageFormat;
 use reqwest::Client;
-use sha2::{Digest, Sha256};
-use tokio::{
-    fs,
-    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-};
+use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, trace, warn};
+use tracing::{trace, warn};
 
 use crate::{
     platform,
@@ -31,16 +29,10 @@ const ASPECT_RATIO_EPSILON: f64 = 0.01;
 
 /// Append a generated filename for an url to the given path buffer
 fn make_filename(url: &str, image_format: ImageFormat) -> PathBuf {
-    let mut path = DIRS.data_local_dir().join("images");
-    let mut hasher = Sha256::new();
-    hasher.update(url);
-    let hash = hasher.finalize();
-    path.push(format!(
-        "{:x}.{}",
-        hash,
-        image_format.extensions_str().get(0).unwrap_or(&"dat")
-    ));
-    path
+    let mut s = BASE64_URL_SAFE_NO_PAD.encode(url.as_bytes());
+    s.push('.');
+    s.push_str(image_format.extensions_str().get(0).unwrap_or(&"dat"));
+    DIRS.data_local_dir().join("images").join(s)
 }
 
 /// Count how many images we've got cached.
@@ -57,9 +49,6 @@ struct Fetcher<'client> {
     gotten: AtomicUsize,
     need: usize,
     client: &'client Client,
-
-    invalid_tx: Option<UnboundedSender<String>>,
-    invalid_rx: UnboundedReceiver<String>,
 }
 
 mod imgur;
@@ -67,18 +56,15 @@ mod reddit_gallery;
 
 impl<'client> Fetcher<'client> {
     async fn new(client: &'client Client) -> Result<Fetcher<'client>> {
-        let downloaded = PersistentSet::load("downloaded").await?;
-        let invalid = PersistentSet::load("invalid").await?;
+        let downloaded = PersistentSet::new("downloaded").await?;
+        let invalid = PersistentSet::new("invalid").await?;
         let need = MAX_CACHED.saturating_sub(count_downloaded().await?);
-        let (invalid_tx, invalid_rx) = unbounded_channel();
         Ok(Self {
             downloaded,
             invalid,
             need,
             gotten: AtomicUsize::new(0),
             client,
-            invalid_tx: Some(invalid_tx),
-            invalid_rx,
         })
     }
 
@@ -95,7 +81,8 @@ impl<'client> Fetcher<'client> {
         let (sw, sh) = platform::screen_size()?;
         ensure!(
             (iw as f64 / ih as f64 - sw as f64 / sh as f64).abs() <= ASPECT_RATIO_EPSILON,
-            "Aspect ratio not within two decimal places ({}:{} instead of {}:{})",
+            "Aspect ratio not within epsilon of {} ({}:{} instead of {}:{})",
+            ASPECT_RATIO_EPSILON,
             iw,
             ih,
             sw,
@@ -132,9 +119,6 @@ impl<'client> Fetcher<'client> {
 
         Ok(())
     }
-
-    /*
-     */
 
     /// Download one image into its place
     #[tracing::instrument(skip(self))]
@@ -186,9 +170,7 @@ impl<'client> Fetcher<'client> {
         // Having collected the result, if we got an error log it and mark this URL as invalid.
         if let Err(ref error) = result {
             warn!(%url, error = %LogError(&error), "failed fetching");
-            if let Some(ref tx) = self.invalid_tx {
-                let _ = tx.send(url);
-            }
+            self.invalid.insert(url).await?;
         }
 
         result
@@ -202,63 +184,58 @@ impl<'client> Fetcher<'client> {
     {
         // Iterate over the given URLs, counting how many we "touch".
         let mut touched = 0;
-        let mut futures = urls
-            .inspect(|_| touched += 1)
-            // Skip over URLs we've already examined
-            .filter(|url| {
-                trace!(
-                    %url,
-                    downloaded = self.downloaded.contains(url), invalid = self.invalid.contains(url),
-                    "url status"
-                );
-                future::ready(!self.downloaded.contains(url) && !self.invalid.contains(url))
-            })
-            // Start fetching the specfic URLs themselves
-            .map(|url| self.fetch_one(url))
-            // Instead of polling in order, take a block of 25 and poll them all at once
-            .buffer_unordered(25);
+        {
+            let mut futures = std::pin::pin!(urls
+                .inspect(|_| touched += 1)
+                // Skip over URLs we've already examined
+                .filter(|url| {
+                    let url = url.to_owned();
+                    async move {
+                        let downloaded = self.downloaded.contains(url.clone()).await.unwrap();
+                        let invalid = self.invalid.contains(url.clone()).await.unwrap();
+                        trace!(%url, downloaded, invalid, "url status");
+                        !(downloaded || invalid)
+                    }
+                })
+                // Start fetching the specfic URLs themselves
+                .map(|url| self.fetch_one(url))
+                // Instead of polling in order, take a block of 25 and poll them all at once
+                .buffer_unordered(25));
 
-        // Iterate over the futures as they complete and stop once we've gotten enough.
-        while let Some(res) = futures.next().await {
-            let gotten = self.gotten.load(Ordering::Acquire);
-            trace!(gotten, success = res.is_ok(), "future completed");
-            if gotten >= self.need {
-                break;
+            // Iterate over the futures as they complete and stop once we've gotten enough.
+            while let Some(res) = futures.next().await {
+                let gotten = self.gotten.load(Ordering::Acquire);
+                trace!(gotten, success = res.is_ok(), "future completed");
+                if gotten >= self.need {
+                    break;
+                }
             }
         }
-
-        // Drop `futures` to ensure `touched` isn't mutably borrowed anymore, so we can return it.
-        drop(futures);
         Ok(touched)
     }
 
     #[tracing::instrument(skip_all)]
-    async fn fetch_toplevel<Urls>(mut self, urls: Urls) -> Result<()>
+    async fn fetch_toplevel<Urls>(self, urls: Urls) -> Result<()>
     where
         Urls: Stream<Item = String> + Unpin,
     {
         // Offload actual fetching to `fetch_multiple`.
         self.fetch_multiple(urls).await?;
 
-        // Read the images directory and store new images in `downloaded`.
-        debug!("storing new downloaded");
+        // Add that which we've downloaded to our database
         let mut dir = tokio::fs::read_dir(DIRS.data_local_dir().join("images")).await?;
         while let Some(entry) = dir.next_entry().await? {
-            if let Some(stem) = entry.path().file_stem().and_then(std::ffi::OsStr::to_str) {
-                self.downloaded.insert_hash(stem.to_owned());
+            if let Some(url) = entry
+                .path()
+                .file_stem()
+                .and_then(OsStr::to_str)
+                .and_then(|s| Some(BASE64_URL_SAFE_NO_PAD.decode(s.as_bytes()).ok()?))
+                .and_then(|buf| String::from_utf8(buf).ok())
+            {
+                trace!(url, "adding to downloaded");
+                self.downloaded.insert(url).await?;
             }
         }
-
-        // Close the "new invalid" channel and receive all that can be received, saving it to `invalid`.
-        debug!("storing new invalids");
-        self.invalid_tx.take();
-        while let Some(url) = self.invalid_rx.recv().await {
-            trace!(%url, "new invalid");
-            self.invalid.insert(url);
-        }
-
-        self.downloaded.store().await?;
-        self.invalid.store().await?;
 
         Ok(())
     }

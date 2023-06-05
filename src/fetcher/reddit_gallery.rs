@@ -89,9 +89,7 @@ impl<'client> Fetcher<'client> {
         // therefore consider it "invalid".
         if touched >= contained {
             debug!(%url, "exhausted reddit gallery");
-            if let Some(ref tx) = self.invalid_tx {
-                let _ = tx.send(url.to_string());
-            }
+            self.invalid.insert(url.to_string()).await?;
         }
 
         Ok(())
