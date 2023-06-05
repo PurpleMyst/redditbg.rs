@@ -1,16 +1,19 @@
 use std::collections::HashSet;
 
-use std::fmt::{Debug, Display};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    fmt::{Debug, Display},
+    time::Duration,
+};
 
 use exponential_backoff::Backoff;
 use eyre::Result;
 use futures::Future;
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use sha2::{Digest, Sha256};
-use tokio::fs;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt};
+use tokio::{
+    fs,
+    io::{self, AsyncBufReadExt, AsyncWriteExt},
+};
 use tracing::{debug, error, trace, warn};
 
 use crate::DIRS;
@@ -121,15 +124,14 @@ where
         Err((error, _)) => Err(error),
     }
 }
+
 pub struct JoinOnDrop {
     handle: Option<std::thread::JoinHandle<Result<()>>>,
 }
 
 impl JoinOnDrop {
     pub fn new(handle: std::thread::JoinHandle<Result<()>>) -> Self {
-        Self {
-            handle: Some(handle),
-        }
+        Self { handle: Some(handle) }
     }
 }
 
@@ -157,35 +159,10 @@ impl Drop for JoinOnDrop {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct MutexWriter<T>(Arc<Mutex<T>>);
-
-impl<T> MutexWriter<T> {
-    pub(crate) fn new(x: T) -> Self {
-        Self(Arc::new(Mutex::new(x)))
-    }
-}
-
-impl<T> Clone for MutexWriter<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<W: std::io::Write> std::io::Write for MutexWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().unwrap().flush()
-    }
-}
-
 pub(crate) struct LogError<T: Debug>(pub(crate) T);
 
 impl<T: Debug> Display for LogError<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#?}", self.0)
+        write!(f, "{:?}", self.0)
     }
 }

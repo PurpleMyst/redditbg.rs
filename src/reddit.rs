@@ -1,5 +1,4 @@
-use std::pin::Pin;
-use std::task::Poll;
+use std::{pin::Pin, task::Poll};
 
 use eyre::{eyre, Result};
 use futures::prelude::*;
@@ -41,10 +40,7 @@ impl<'a> Posts<'a> {
     #[tracing::instrument(skip(self))]
     fn get_next_page(&mut self) -> impl Future<Output = Result<Page>> {
         // Spin up the request builder at the correct URL
-        let url = format!(
-            "https://reddit.com/r/{}/new.json",
-            self.subreddits.join("+")
-        );
+        let url = format!("https://reddit.com/r/{}/new.json", self.subreddits.join("+"));
         let mut req_builder = self.client.get(&url);
 
         // Make sure we're getting the freshest posts
@@ -110,17 +106,12 @@ impl<'a> Posts<'a> {
 impl<'a> Stream for Posts<'a> {
     type Item = String;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        ctx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, ctx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         // Simple state-machine loop
         loop {
             match self.state {
                 // If we need more posts, let's spin up a future that gets them for us
-                PostsState::NeedMore => {
-                    self.state = PostsState::Fetching(self.get_next_page().boxed_local())
-                }
+                PostsState::NeedMore => self.state = PostsState::Fetching(self.get_next_page().boxed_local()),
 
                 // If we're currently fetching posts, let's poll the future
                 PostsState::Fetching(ref mut fut) => {
@@ -129,10 +120,7 @@ impl<'a> Stream for Posts<'a> {
 
                     match posts {
                         // If we've got posts, move on to the next state
-                        Ok(Page {
-                            next_page_id,
-                            posts,
-                        }) => {
+                        Ok(Page { next_page_id, posts }) => {
                             self.next_page_id = next_page_id;
                             self.state = PostsState::Fetched(posts);
                         }

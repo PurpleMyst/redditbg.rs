@@ -1,4 +1,8 @@
-use std::{convert::TryFrom, io, path::Path, path::PathBuf};
+use std::{
+    convert::TryFrom,
+    io,
+    path::{Path, PathBuf},
+};
 
 use eyre::{ensure, Result, WrapErr};
 
@@ -30,38 +34,29 @@ pub fn set_background(path: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use winapi::um::winuser::{SystemParametersInfoW, SPI_SETDESKWALLPAPER};
 
-    ensure!(
-        path.is_absolute(),
-        "SystemParametersInfoW requires an absolute path"
-    );
+    ensure!(path.is_absolute(), "SystemParametersInfoW requires an absolute path");
 
-    let path_utf16 = path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<u16>>();
+    let path_utf16 = path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
 
-    wintry!(unsafe {
-        SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, path_utf16.as_ptr() as *mut _, 0)
-    })
-    .wrap_err(format!("Failed to set background to {:?}", path))
+    wintry!(unsafe { SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, path_utf16.as_ptr() as *mut _, 0) })
+        .wrap_err(format!("Failed to set background to {:?}", path))
 }
 
 #[cfg(windows)]
 pub fn copy_image(img: image::DynamicImage) -> Result<()> {
-    use winapi::um::wingdi::{CreateBitmap, DeleteObject};
-    use winapi::um::winuser::{
-        CloseClipboard, EmptyClipboard, GetForegroundWindow, OpenClipboard, SetClipboardData,
-        CF_BITMAP,
+    use winapi::um::{
+        wingdi::{CreateBitmap, DeleteObject},
+        winuser::{CloseClipboard, EmptyClipboard, GetForegroundWindow, OpenClipboard, SetClipboardData, CF_BITMAP},
     };
 
-    let img = img.to_bgra8();
+    // The image create has stopped supporting BGRA8, so we'll need to convert our image to it from
+    // RGBA8 ourselves once we call into_raw
+    let img = img.to_rgba8();
 
     // Open the clipboard
-    wintry!(unsafe { OpenClipboard(GetForegroundWindow()) })
-        .wrap_err("Failed to open clipboard")?;
+    wintry!(unsafe { OpenClipboard(GetForegroundWindow()) }).wrap_err("Failed to open clipboard")?;
 
-    // Emptythe clipboard
+    // Empty the clipboard
     // For whatever reason you can't overwrite it if it's got an image in it. ¯\_(ツ)_/¯
     wintry!(unsafe { EmptyClipboard() }).wrap_err("Failed to empty clipboard")?;
 
@@ -70,6 +65,7 @@ pub fn copy_image(img: image::DynamicImage) -> Result<()> {
     let h = img.height();
     let pixel_sz = 4 * 8;
     let mut pixels = img.into_raw();
+    pixels.chunks_exact_mut(4).for_each(|chunk| chunk[0..3].reverse());
     let bmp = unsafe { CreateBitmap(w as _, h as _, 1, pixel_sz, pixels.as_mut_ptr() as *mut _) };
 
     // Set the clipboard data to it
@@ -77,8 +73,7 @@ pub fn copy_image(img: image::DynamicImage) -> Result<()> {
         .wrap_err("Failed to set clipboard data");
 
     // Free the bitmap memory
-    let delete_result =
-        wintry!(unsafe { DeleteObject(bmp as *mut _) }).wrap_err("Failed to delete bitmap object");
+    let delete_result = wintry!(unsafe { DeleteObject(bmp as *mut _) }).wrap_err("Failed to delete bitmap object");
 
     // Close the clipboard
     let close_result = wintry!(unsafe { CloseClipboard() }).wrap_err("Failed to close clipboard");
@@ -117,11 +112,7 @@ impl tracing::field::Visit for NotifierVisit {
 }
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Notifier {
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        _ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) {
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
         use winrt_notification::{Duration, IconCrop, Toast};
 
         let mut visitor = NotifierVisit::default();
@@ -142,16 +133,15 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Notifier {
             .icon(
                 &self.icon,
                 IconCrop::Square,
-                self.icon
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .unwrap_or(""),
+                self.icon.file_stem().and_then(|stem| stem.to_str()).unwrap_or(""),
             )
             .show()
             .map_err(|err| {
                 eyre::format_err!(
-                    "Failed to show notification (HRESULT {:?})",
-                    err.as_hresult()
+                    "Failed to show notification: {:?} (CODE {:?}, WIN32 CODE {:?})",
+                    err.message(),
+                    err.code(),
+                    err.win32_error()
                 )
             });
     }

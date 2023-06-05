@@ -45,9 +45,7 @@ impl<'client> Fetcher<'client> {
     #[async_recursion(?Send)]
     pub(super) async fn parse_reddit_gallery(&self, url: &str, body: Bytes) -> Result<()> {
         // Parse HTML and ensure there were no errors
-        let html = scraper::Html::parse_document(
-            std::str::from_utf8(&body).wrap_err("Body was not valid UTF-8.")?,
-        );
+        let html = scraper::Html::parse_document(std::str::from_utf8(&body).wrap_err("Body was not valid UTF-8.")?);
         ensure!(html.errors.is_empty(), "html.errors was not empty");
 
         // Extract a script tag whose code starts with "window.___r"
@@ -77,13 +75,7 @@ impl<'client> Fetcher<'client> {
             .posts
             .models
             .into_iter()
-            .flat_map(|(_, model)| {
-                model
-                    .media
-                    .media_metadata
-                    .into_iter()
-                    .map(|(_, metadata)| metadata.s.u)
-            })
+            .flat_map(|(_, model)| model.media.media_metadata.into_iter().map(|(_, metadata)| metadata.s.u))
             .collect::<Vec<String>>();
         trace!(?gallery, "parsed reddit gallery");
 
