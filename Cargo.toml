@@ -4,6 +4,7 @@ version = "4.3.1"
 authors = ["PurpleMyst <PurpleMyst@users.noreply.github.com>"]
 edition = "2018"
 include = ["src/**/*", "readme.md"]
+publish = false
 
 [package.metadata.release]
 pre-release-commit-message = "chore(release): version {{version}}"
