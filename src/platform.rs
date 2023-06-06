@@ -39,11 +39,13 @@ pub fn set_background(path: &Path) -> Result<()> {
     let path_utf16 = path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
 
     wintry!(unsafe { SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, path_utf16.as_ptr() as *mut _, 0) })
-        .wrap_err(format!("Failed to set background to {:?}", path))
+        .wrap_err(format!("Failed to set background to {path:?}"))
 }
 
 #[cfg(windows)]
-pub fn copy_image(img: image::DynamicImage) -> Result<()> {
+pub fn copy_image(img: &image::DynamicImage) -> Result<()> {
+    use std::convert::TryInto;
+
     use winapi::um::{
         wingdi::{CreateBitmap, DeleteObject},
         winuser::{CloseClipboard, EmptyClipboard, GetForegroundWindow, OpenClipboard, SetClipboardData, CF_BITMAP},
@@ -61,19 +63,19 @@ pub fn copy_image(img: image::DynamicImage) -> Result<()> {
     wintry!(unsafe { EmptyClipboard() }).wrap_err("Failed to empty clipboard")?;
 
     // Create the bitmap to be copied
-    let w = img.width();
-    let h = img.height();
+    let w: i32 = img.width().try_into()?;
+    let h: i32 = img.height().try_into()?;
     let pixel_sz = 4 * 8;
     let mut pixels = img.into_raw();
     pixels.chunks_exact_mut(4).for_each(|chunk| chunk[0..3].reverse());
-    let bmp = unsafe { CreateBitmap(w as _, h as _, 1, pixel_sz, pixels.as_mut_ptr() as *mut _) };
+    let bmp = unsafe { CreateBitmap(w, h, 1, pixel_sz, pixels.as_mut_ptr().cast()) };
 
     // Set the clipboard data to it
-    let set_result = wintry!(unsafe { SetClipboardData(CF_BITMAP, bmp as *mut _) } as usize)
+    let set_result = wintry!(unsafe { SetClipboardData(CF_BITMAP, bmp.cast()) } as usize)
         .wrap_err("Failed to set clipboard data");
 
     // Free the bitmap memory
-    let delete_result = wintry!(unsafe { DeleteObject(bmp as *mut _) }).wrap_err("Failed to delete bitmap object");
+    let delete_result = wintry!(unsafe { DeleteObject(bmp.cast()) }).wrap_err("Failed to delete bitmap object");
 
     // Close the clipboard
     let close_result = wintry!(unsafe { CloseClipboard() }).wrap_err("Failed to close clipboard");
@@ -100,7 +102,7 @@ impl tracing::field::Visit for NotifierVisit {
         use std::fmt::Write;
 
         if field.name() == "message" {
-            self.message = Some(format!("{:?}", value));
+            self.message = Some(format!("{value:?}"));
             return;
         }
 
@@ -125,7 +127,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Notifier {
                 "{} ({}:{})",
                 self.title,
                 meta.file().unwrap_or("<unknown>"),
-                meta.line().unwrap_or(0xCAFEBABE),
+                meta.line().unwrap_or(0xCAFE_BABE),
             ))
             .text1(visitor.message.as_deref().unwrap_or("no message"))
             .text2(&visitor.fields)
@@ -133,7 +135,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Notifier {
             .icon(
                 &self.icon,
                 IconCrop::Square,
-                self.icon.file_stem().and_then(|stem| stem.to_str()).unwrap_or(""),
+                self.icon.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or(""),
             )
             .show()
             .map_err(|err| {

@@ -17,7 +17,7 @@ use tracing::{trace, warn};
 
 use crate::{
     platform,
-    utils::{with_backoff, LogError, PersistentSet},
+    utils::{with_backoff, PersistentSet},
     DIRS,
 };
 
@@ -31,7 +31,7 @@ const ASPECT_RATIO_EPSILON: f64 = 0.01;
 fn make_filename(url: &str, image_format: ImageFormat) -> PathBuf {
     let mut s = BASE64_URL_SAFE_NO_PAD.encode(url.as_bytes());
     s.push('.');
-    s.push_str(image_format.extensions_str().get(0).unwrap_or(&"dat"));
+    s.push_str(image_format.extensions_str().first().unwrap_or(&"dat"));
     DIRS.data_local_dir().join("images").join(s)
 }
 
@@ -80,7 +80,7 @@ impl<'client> Fetcher<'client> {
         let (iw, ih) = (img.width(), img.height());
         let (sw, sh) = platform::screen_size()?;
         ensure!(
-            (iw as f64 / ih as f64 - sw as f64 / sh as f64).abs() <= ASPECT_RATIO_EPSILON,
+            (f64::from(iw) / f64::from(ih) - f64::from(sw) / f64::from(sh)).abs() <= ASPECT_RATIO_EPSILON,
             "Aspect ratio not within epsilon of {} ({}:{} instead of {}:{})",
             ASPECT_RATIO_EPSILON,
             iw,
@@ -132,17 +132,17 @@ impl<'client> Fetcher<'client> {
                     .get(&url)
                     .header("Accept", "image/*")
                     .send()
-                    .and_then(|response| response.bytes())
+                    .and_then(reqwest::Response::bytes)
             })
             .await
-            .wrap_err_with(|| format!("Failed to fetch {:?}", url))?;
+            .wrap_err_with(|| format!("Failed to fetch {url:?}"))?;
             trace!(size = body.len(), "got body");
 
             // Try to parse it as a direct image.
             match self.parse_direct_image(&url, body.clone()).await {
                 Ok(()) => return Ok(()),
                 Err(error) => {
-                    trace!(error = %LogError(&error), "failed direct image check");
+                    trace!(?error, "failed direct image check");
                 }
             }
 
@@ -150,7 +150,7 @@ impl<'client> Fetcher<'client> {
             match self.parse_imgur_gallery(&url, body.clone()).await {
                 Ok(..) => return Ok(()),
                 Err(error) => {
-                    trace!(error = %LogError(&error), "failed imgur gallery check");
+                    trace!(?error, "failed imgur gallery check");
                 }
             }
 
@@ -158,7 +158,7 @@ impl<'client> Fetcher<'client> {
             match self.parse_reddit_gallery(&url, body.clone()).await {
                 Ok(..) => return Ok(()),
                 Err(error) => {
-                    trace!(error = %LogError(&error), "failed reddit gallery check");
+                    trace!(?error, "failed reddit gallery check");
                 }
             }
 
@@ -169,7 +169,7 @@ impl<'client> Fetcher<'client> {
 
         // Having collected the result, if we got an error log it and mark this URL as invalid.
         if let Err(ref error) = result {
-            warn!(%url, error = %LogError(&error), "failed fetching");
+            warn!(%url, ?error, "failed fetching");
             self.invalid.insert(url).await?;
         }
 
@@ -189,7 +189,7 @@ impl<'client> Fetcher<'client> {
                 .inspect(|_| touched += 1)
                 // Skip over URLs we've already examined
                 .filter(|url| {
-                    let url = url.to_owned();
+                    let url = url.clone();
                     async move {
                         let downloaded = self.downloaded.contains(url.clone()).await.unwrap();
                         let invalid = self.invalid.contains(url.clone()).await.unwrap();
@@ -229,7 +229,7 @@ impl<'client> Fetcher<'client> {
                 .path()
                 .file_stem()
                 .and_then(OsStr::to_str)
-                .and_then(|s| Some(BASE64_URL_SAFE_NO_PAD.decode(s.as_bytes()).ok()?))
+                .and_then(|s| BASE64_URL_SAFE_NO_PAD.decode(s.as_bytes()).ok())
                 .and_then(|buf| String::from_utf8(buf).ok())
             {
                 self.downloaded.insert(url).await?;

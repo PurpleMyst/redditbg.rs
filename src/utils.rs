@@ -26,6 +26,7 @@ impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn report_ie(ie: deadpool_sqlite::InteractError) -> eyre::Report {
     eyre::format_err!("Interact error: {ie:?}")
 }
@@ -120,7 +121,7 @@ impl Drop for JoinOnDrop {
             Ok(Ok(())) => debug!("child thread joined"),
 
             Ok(Err(error)) => {
-                error!(error = %LogError(&error), "child thread returned error")
+                error!(?error, "child thread returned error");
             }
 
             Err(error) => {
@@ -132,16 +133,8 @@ impl Drop for JoinOnDrop {
                     &"not of known type"
                 };
 
-                error!(%error, "child thread panic")
+                error!(%error, "child thread panic");
             }
         }
-    }
-}
-
-pub(crate) struct LogError<T: Debug>(pub(crate) T);
-
-impl<T: Debug> Display for LogError<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
     }
 }

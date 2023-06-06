@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde_json::Value;
 use tracing::{trace, warn};
 
-use crate::utils::{with_backoff, LogError};
+use crate::utils::with_backoff;
 
 pub struct Posts<'a> {
     client: &'a Client,
@@ -64,7 +64,7 @@ impl<'a> Posts<'a> {
                     .try_clone()
                     .unwrap()
                     .send()
-                    .and_then(|resp| resp.json())
+                    .and_then(reqwest::Response::json)
                     .map_err(eyre::Error::from)
             })
             .await?;
@@ -75,7 +75,7 @@ impl<'a> Posts<'a> {
 
             let next_page_id = data
                 .get("after")
-                .and_then(|after| after.as_str())
+                .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned);
 
             // Now let's navigate the tree that Reddit gives us to get what we want
@@ -89,13 +89,11 @@ impl<'a> Posts<'a> {
                     .iter()
                     .filter_map(|child| {
                         let data = child.get("data")?;
-
-                        if !data.get("over_18")?.as_bool()? {
-                            Some(data.get("url")?.as_str()?.to_owned())
-                        } else {
+                        if data.get("over_18")?.as_bool()? {
                             // skip over NSFW wallpapers
-                            None
+                            return None;
                         }
+                        Some(data.get("url")?.as_str()?.to_owned())
                     })
                     .collect(),
             })
@@ -128,7 +126,7 @@ impl<'a> Stream for Posts<'a> {
                         Err(error) => {
                             // We've already got backoff baked into `get_next_page`, we probably can't recover here
                             // It's best if we just stop giving out posts
-                            warn!(error = %LogError(&error), "error while fetching posts");
+                            warn!(?error, "error while fetching posts");
                             self.state = PostsState::Exhausted;
                         }
                     }

@@ -14,8 +14,6 @@ use reqwest::Client;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, Level};
 
-use crate::utils::LogError;
-
 static DIRS: once_cell::sync::Lazy<ProjectDirs> = once_cell::sync::Lazy::new(|| {
     ProjectDirs::from("it", "PurpleMyst", env!("CARGO_PKG_NAME")).expect("could not create ProjectDirs")
 });
@@ -167,7 +165,7 @@ fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
 
             if let Err(error) = tx.send(Message::ChangeNow) {
                 let error = eyre::Report::from(error);
-                error!(error = %LogError(&error), "could not send message");
+                error!(?error, "could not send message");
             }
 
             Ok(())
@@ -181,7 +179,7 @@ fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
 
             if let Err(error) = tx.send(Message::CopyImage) {
                 let error = eyre::Report::from(error);
-                error!(error = %LogError(&error), "could not send message");
+                error!(?error, "could not send message");
             }
 
             Ok(())
@@ -194,13 +192,13 @@ fn setup_systray() -> Result<(utils::JoinOnDrop, Receiver<Message>)> {
         // at this point i'm praying this works
         if let Err(error) = app.shutdown() {
             let error = eyre::Report::from(error);
-            error!(error = %LogError(&error), "shutdown failed");
+            error!(?error, "shutdown failed");
         }
         app.quit();
 
         if let Err(error) = tx.send(Message::Quit) {
             let error = eyre::Report::from(error);
-            error!(error = %LogError(&error), "could not send message");
+            error!(?error, "could not send message");
         }
 
         Ok(())
@@ -228,7 +226,7 @@ fn main() -> Result<()> {
         match find_new_background(&mut runtime, &client) {
             Ok(()) => info!("set background successfully"),
             Err(error) => {
-                error!(error = %LogError(&error), "error while finding new background")
+                error!(?error, "error while finding new background");
             }
         }
 
@@ -247,12 +245,12 @@ fn main() -> Result<()> {
                 Ok(Message::CopyImage) => {
                     match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
                         .map_err(eyre::Error::from)
-                        .and_then(|reader| platform::copy_image(reader.with_guessed_format()?.decode()?))
+                        .and_then(|reader| platform::copy_image(&reader.with_guessed_format()?.decode()?))
                     {
                         Ok(()) => info!(target: "notification", "copied image"),
 
                         Err(error) => {
-                            error!(error = %LogError(&error), "copy image error");
+                            error!(?error, "copy image error");
                         }
                     }
                 }

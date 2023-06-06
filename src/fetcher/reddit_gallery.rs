@@ -55,7 +55,7 @@ impl<'client> Fetcher<'client> {
             .select(&scraper::Selector::parse("script").unwrap())
             .find_map(|script| {
                 let text = script.text().collect::<String>();
-                text.trim().starts_with("window.___r").then(|| text)
+                text.trim().starts_with("window.___r").then_some(text)
             })
             .ok_or_else(|| format_err!("Could not find a valid script tag."))?;
 
@@ -67,7 +67,7 @@ impl<'client> Fetcher<'client> {
         let end = text
             .rfind('}')
             .ok_or_else(|| format_err!("Could not find ending quote"))?;
-        let code = &text[start..end + 1];
+        let code = &text[start..=end];
 
         // Dig out the URLs from the extremely nested structure.
         let gallery: RedditGallery = serde_json::from_str(code)?;
@@ -75,7 +75,7 @@ impl<'client> Fetcher<'client> {
             .posts
             .models
             .into_iter()
-            .flat_map(|(_, model)| model.media.media_metadata.into_iter().map(|(_, metadata)| metadata.s.u))
+            .flat_map(|(_, model)| model.media.media_metadata.into_values().map(|metadata| metadata.s.u))
             .collect::<Vec<String>>();
         trace!(?gallery, "parsed reddit gallery");
 

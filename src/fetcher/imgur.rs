@@ -42,7 +42,7 @@ impl<'client> Fetcher<'client> {
         let end = text
             .rfind(&['\'', '"'][..])
             .ok_or_else(|| format_err!("Could not find ending quote"))?;
-        let code = &text[start..end + 1];
+        let code = &text[start..=end];
 
         // Parse the javascript string as a String and then parse its contents as a gallery
         let data: String = serde_json::from_str(code).wrap_err("Could not parse postDataJSON as a String")?;
