@@ -71,8 +71,8 @@ pub fn copy_image(img: &image::DynamicImage) -> Result<()> {
     let bmp = unsafe { CreateBitmap(w, h, 1, pixel_sz, pixels.as_mut_ptr().cast()) };
 
     // Set the clipboard data to it
-    let set_result = wintry!(unsafe { SetClipboardData(CF_BITMAP, bmp.cast()) } as usize)
-        .wrap_err("Failed to set clipboard data");
+    let set_result =
+        wintry!(unsafe { SetClipboardData(CF_BITMAP, bmp.cast()) } as usize).wrap_err("Failed to set clipboard data");
 
     // Free the bitmap memory
     let delete_result = wintry!(unsafe { DeleteObject(bmp.cast()) }).wrap_err("Failed to delete bitmap object");
