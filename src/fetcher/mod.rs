@@ -7,13 +7,13 @@ use std::{
 use async_recursion::async_recursion;
 use base64::prelude::*;
 use bytes::Bytes;
-use eyre::{bail, ensure, format_err, Result, WrapErr};
+use eyre::{bail, Result, WrapErr};
 use futures::prelude::*;
 use image::{imageops::FilterType::Lanczos3, ImageFormat};
 use reqwest::Client;
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, trace, trace_span, warn};
+use tracing::{debug, trace, trace_span};
 
 use crate::{
     platform,
