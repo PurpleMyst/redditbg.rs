@@ -227,6 +227,11 @@ impl<'client> Fetcher<'client> {
     where
         Urls: Stream<Item = String> + Unpin,
     {
+        // If we don't need anything, bail!
+        if self.need == 0 {
+            return Ok(());
+        }
+
         // Offload actual fetching to `fetch_multiple`.
         self.fetch_multiple(urls).await?;
 
