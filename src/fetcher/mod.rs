@@ -128,7 +128,7 @@ impl<'client> Fetcher<'client> {
     #[async_recursion(?Send)]
     async fn fetch_one(&self, url: String) -> Result<()> {
         // We create a closure as a pseudo-try block.
-        let result = (|| async {
+        let result = async {
             // Fetch the url's body
             let body: Bytes = with_backoff(|| {
                 self.client
@@ -172,7 +172,7 @@ impl<'client> Fetcher<'client> {
 
             // If we get here, we've no idea what this URL is.
             bail!("Unable to parse as anything known");
-        })()
+        }
         .await;
 
         // Having collected the result, if we got an error log it and mark this URL as invalid.
