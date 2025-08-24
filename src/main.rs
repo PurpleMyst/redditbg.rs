@@ -239,7 +239,7 @@ fn main() -> Result<()> {
                 }
 
                 Ok(Message::CopyImage) => {
-                    match image::io::Reader::open(&DIRS.cache_dir().join("background.png"))
+                    match image::ImageReader::open(&DIRS.cache_dir().join("background.png"))
                         .map_err(eyre::Error::from)
                         .and_then(|reader| platform::copy_image(&reader.with_guessed_format()?.decode()?))
                     {

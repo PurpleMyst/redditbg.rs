@@ -24,7 +24,7 @@ pub fn pick() -> Result<DynamicImage> {
         let path = entry?.path();
 
         // Try to read this path as an image
-        let maybe_image = (image::io::Reader::open(&path).wrap_err("failed to open path"))
+        let maybe_image = (image::ImageReader::open(&path).wrap_err("failed to open path"))
             .and_then(|r| r.with_guessed_format().wrap_err("failed to guess format"))
             .and_then(|r| r.decode().wrap_err("failed to decode"));
 

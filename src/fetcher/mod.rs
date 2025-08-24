@@ -99,21 +99,19 @@ impl<'client> Fetcher<'client> {
         // 1) the runtime isn't blocked on the CPU-heavy task of resizing the image;
         // 2) blocking tasks can not be canceled so we won't get half-written images.
         let dst = make_filename(url, STORAGE_FORMAT);
-        tokio::task::spawn_blocking({
-            move || -> Result<()> {
-                use std::io::prelude::*;
-                let _span = trace_span!("writing fetched image", dst = %dst.display()).entered();
-                let mut file = tempfile::NamedTempFile::new()?;
-                trace!(tmp_path = %file.path().display(), "created temporary file");
-                img.resize(sw, sh, Lanczos3)
-                    .write_to(&mut file, STORAGE_FORMAT)
-                    .wrap_err("failed to write image")?;
-                trace!("flushing temporary file");
-                file.flush().wrap_err("failed to flush")?;
-                trace!("persisting temporary file");
-                file.persist(dst).wrap_err("failed to persist")?;
-                Ok(())
-            }
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            use std::io::prelude::*;
+            let _span = trace_span!("writing fetched image", dst = %dst.display()).entered();
+            let mut file = tempfile::NamedTempFile::new()?;
+            trace!(tmp_path = %file.path().display(), "created temporary file");
+            img.resize(sw, sh, Lanczos3)
+                .write_to(&mut file, STORAGE_FORMAT)
+                .wrap_err("failed to write image")?;
+            trace!("flushing temporary file");
+            file.flush().wrap_err("failed to flush")?;
+            trace!("persisting temporary file");
+            file.persist(dst).wrap_err("failed to persist")?;
+            Ok(())
         })
         .await??;
 

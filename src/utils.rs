@@ -13,13 +13,13 @@ use tracing::{debug, error, trace};
 
 use crate::DIRS;
 
-pub struct BackoffPolicy<'a>(pub exponential_backoff::Iter<'a>);
+pub struct BackoffPolicy(pub exponential_backoff::IntoIter);
 
-impl<E> ErrorHandler<E> for BackoffPolicy<'_> {
+impl<E> ErrorHandler<E> for BackoffPolicy {
     type OutError = E;
 
     fn handle(&mut self, _attempt: usize, err: E) -> RetryPolicy<Self::OutError> {
-        match self.0.next() {
+        match self.0.next().flatten() {
             Some(duration) => RetryPolicy::WaitRetry(duration),
             None => RetryPolicy::ForwardError(err),
         }

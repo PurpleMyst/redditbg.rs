@@ -10,35 +10,35 @@ publish = false
 pre-release-commit-message = "chore(release): version {{version}}"
 
 [dependencies]
-bytes = "1.5.0"
+bytes = "1.10.1"
 directories = { version = "2.0.0", package = "directories-next" }
-exponential-backoff = "1.2.0"
-futures = "0.3.30"
+exponential-backoff = "2.1.0"
+futures = "0.3.31"
 futures-retry = "0.6.0"
-image = "0.24.8"
+image = "0.25.6"
 noisy_float = "0.2.0"
-reqwest = { version = "0.11.23", features = ["json", "stream"] }
-serde_json = "1.0.111"
+reqwest = { version = "0.12.23", features = ["json", "stream"] }
+serde_json = "1.0.143"
 systray = "0.4.0"
-tempfile = "3.9.0"
-tokio = { version = "1.35.1", features = ["macros", "time", "fs", "io-util", "rt", "rt-multi-thread", "parking_lot"] }
-tokio-stream = { version = "0.1.14", features = ["fs"] }
+tempfile = "3.21.0"
+tokio = { version = "1.47.1", features = ["macros", "time", "fs", "io-util", "rt", "rt-multi-thread", "parking_lot"] }
+tokio-stream = { version = "0.1.17", features = ["fs"] }
 slog-bunyan = "2.5.0"
 file-rotator = "0.6.2"
-eyre = "0.6.11"
-tracing = { version = "0.1.40", features = ["max_level_trace", "release_max_level_debug"] }
-tracing-bunyan-formatter = "0.3.9"
-tracing-subscriber = "0.3.18"
-scraper = "0.18.1"
-serde = { version = "1.0.195", features = ["derive"] }
-async-recursion = "1.0.5"
-rusqlite = { version = "0.30.0", features = ["bundled"] }
-deadpool-sqlite = "0.7.0"
-once_cell = "1.19.0"
-base64 = "0.21.7"
-image_hasher = "1.2.0"
-tracing-unwrap = "0.10.0"
-thiserror = "1.0.56"
+eyre = "0.6.12"
+tracing = { version = "0.1.41", features = ["max_level_trace", "release_max_level_debug"] }
+tracing-bunyan-formatter = "0.3.10"
+tracing-subscriber = "0.3.19"
+scraper = "0.24.0"
+serde = { version = "1.0.219", features = ["derive"] }
+async-recursion = "1.1.1"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+deadpool-sqlite = "0.12.1"
+once_cell = "1.21.3"
+base64 = "0.22.1"
+image_hasher = "3.0.0"
+tracing-unwrap = "1.0.1"
+thiserror = "2.0.16"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3.9"
