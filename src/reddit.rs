@@ -1,9 +1,9 @@
-use std::{pin::Pin, task::Poll};
+use std::{io::Cursor, pin::Pin, task::Poll};
 
-use eyre::{eyre, Result};
+use atom_syndication::Feed;
+use eyre::{Result, WrapErr};
 use futures::prelude::*;
 use reqwest::Client;
-use serde_json::Value;
 use tracing::{trace, warn};
 
 use crate::utils::with_backoff;
@@ -27,6 +27,36 @@ enum PostsState {
     Exhausted,
 }
 
+fn extract_post_url(content: &str) -> Option<String> {
+    let html = scraper::Html::parse_fragment(content);
+    let selector = scraper::Selector::parse("a").unwrap();
+
+    html.select(&selector).find_map(|link| {
+        if link.text().collect::<String>().trim() == "[link]" {
+            link.value().attr("href").map(ToOwned::to_owned)
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_feed(body: &[u8]) -> Result<Page> {
+    let feed = Feed::read_from(Cursor::new(body)).wrap_err("failed to parse Reddit Atom feed")?;
+    let next_page_id = feed.entries().last().map(|entry| entry.id().to_owned());
+    let posts = feed
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .content()
+                .and_then(|content| content.value())
+                .and_then(extract_post_url)
+        })
+        .collect();
+
+    Ok(Page { next_page_id, posts })
+}
+
 impl<'a> Posts<'a> {
     pub fn new(client: &'a Client, subreddits: &'a [&'a str]) -> Self {
         Self {
@@ -40,7 +70,7 @@ impl<'a> Posts<'a> {
     #[tracing::instrument(skip(self))]
     fn get_next_page(&mut self) -> impl Future<Output = Result<Page>> {
         // Spin up the request builder at the correct URL
-        let url = format!("https://reddit.com/r/{}/new.json", self.subreddits.join("+"));
+        let url = format!("https://www.reddit.com/r/{}/new.rss", self.subreddits.join("+"));
         let mut req_builder = self.client.get(&url);
 
         // Make sure we're getting the freshest posts
@@ -55,48 +85,16 @@ impl<'a> Posts<'a> {
 
         // *puts on sunglasses* Now it's time to enter the matrix
         async move {
-            // Here we make our retryable future that just sends out the
-            // response and parses it as JSON. It's important that we parse the
-            // response into JSON inside the retryable future because RequestBuilder::send()
-            // does not actually consume the response
-            let mut listing: Value = with_backoff(move || {
-                req_builder
-                    .try_clone()
-                    .unwrap()
-                    .send()
-                    .and_then(reqwest::Response::json)
-                    .map_err(eyre::Error::from)
+            // Here we make our retryable future that sends out the request, checks the status,
+            // and collects the Atom body inside the retryable future.
+            let body = with_backoff(move || {
+                let req_builder = req_builder.try_clone().unwrap();
+                async move { Ok::<_, reqwest::Error>(req_builder.send().await?.error_for_status()?.bytes().await?) }
             })
-            .await?;
+            .await
+            .map_err(eyre::Error::from)?;
 
-            let data = listing
-                .get_mut("data")
-                .ok_or_else(|| eyre!("Toplevel JSON did not have data"))?;
-
-            let next_page_id = data
-                .get("after")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned);
-
-            // Now let's navigate the tree that Reddit gives us to get what we want
-            Ok(Page {
-                next_page_id,
-                posts: data
-                    .get_mut("children")
-                    .ok_or_else(|| eyre!("Toplevel data did not contain children"))?
-                    .as_array()
-                    .ok_or_else(|| eyre!("Toplevel children were not an array"))?
-                    .iter()
-                    .filter_map(|child| {
-                        let data = child.get("data")?;
-                        if data.get("over_18")?.as_bool()? {
-                            // skip over NSFW wallpapers
-                            return None;
-                        }
-                        Some(data.get("url")?.as_str()?.to_owned())
-                    })
-                    .collect(),
-            })
+            parse_feed(&body)
         }
     }
 }
@@ -150,5 +148,78 @@ impl<'a> Stream for Posts<'a> {
                 PostsState::Exhausted => return Poll::Ready(None),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_post_url_finds_link_anchor() {
+        let content = r#"
+            <table><tr><td>
+                <span><a href="https://i.redd.it/example.png">[link]</a></span>
+                <span><a href="https://reddit.com/comments/example">[comments]</a></span>
+            </td></tr></table>
+        "#;
+
+        assert_eq!(
+            extract_post_url(content).as_deref(),
+            Some("https://i.redd.it/example.png")
+        );
+    }
+
+    #[test]
+    fn parse_feed_extracts_post_urls_and_next_page_id() {
+        let body = br#"<?xml version="1.0" encoding="UTF-8"?>
+            <feed xmlns="http://www.w3.org/2005/Atom">
+                <title>newest submissions : multi</title>
+                <updated>2026-06-07T15:18:45+00:00</updated>
+                <id>/r/wallpaper/new.rss</id>
+                <entry>
+                    <title>Direct image</title>
+                    <id>t3_first</id>
+                    <updated>2026-06-07T15:11:43+00:00</updated>
+                    <content type="html">
+                        &lt;span&gt;&lt;a href=&quot;https://i.redd.it/direct.png&quot;&gt;[link]&lt;/a&gt;&lt;/span&gt;
+                        &lt;a href=&quot;https://reddit.com/c/1&quot;&gt;[comments]&lt;/a&gt;
+                    </content>
+                </entry>
+                <entry>
+                    <title>Gallery</title>
+                    <id>t3_second</id>
+                    <updated>2026-06-07T15:10:43+00:00</updated>
+                    <content type="html">
+                        &lt;a href=&quot;https://www.reddit.com/gallery/a&quot;&gt;[link]&lt;/a&gt;
+                    </content>
+                </entry>
+            </feed>"#;
+
+        let page = parse_feed(body).unwrap();
+
+        assert_eq!(page.next_page_id.as_deref(), Some("t3_second"));
+        assert_eq!(
+            page.posts,
+            vec![
+                "https://i.redd.it/direct.png".to_owned(),
+                "https://www.reddit.com/gallery/a".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_feed_handles_empty_feed() {
+        let body = br#"<?xml version="1.0" encoding="UTF-8"?>
+            <feed xmlns="http://www.w3.org/2005/Atom">
+                <title>newest submissions : multi</title>
+                <updated>2026-06-07T15:18:45+00:00</updated>
+                <id>/r/wallpaper/new.rss</id>
+            </feed>"#;
+
+        let page = parse_feed(body).unwrap();
+
+        assert!(page.next_page_id.is_none());
+        assert!(page.posts.is_empty());
     }
 }

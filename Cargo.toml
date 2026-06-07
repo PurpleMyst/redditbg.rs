@@ -39,6 +39,7 @@ base64 = "0.22.1"
 image_hasher = "3.0.0"
 tracing-unwrap = "1.0.1"
 thiserror = "2.0.16"
+atom_syndication = "0.12.8"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3.9"
